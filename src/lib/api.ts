@@ -7,6 +7,7 @@ import type {
   LancamentoParaVincular,
   TransacaoParaVincular,
   VinculoLancamento,
+  VinculoTransacao,
   Transacao,
   DashboardData,
   Paginated,
@@ -130,6 +131,10 @@ export const transacoesApi = {
     api.get<LancamentoParaVincular[]>(`/transacoes/${id}/lancamentos-para-vincular`),
   vincular: (id: number, lancamento_id: number, valor_vinculado: number) =>
     api.post(`/transacoes/${id}/vincular`, { lancamento_id, valor_vinculado }),
+  vinculos: (id: number) =>
+    api.get<VinculoTransacao[]>(`/transacoes/${id}/vinculos`),
+  desvincularTodos: (id: number) =>
+    api.delete(`/transacoes/${id}/vinculos`),
 }
 
 // ─── Conciliação ──────────────────────────────────────────────────────────────

@@ -73,7 +73,6 @@ export default function Lancamentos() {
   const [vinculosLancamento, setVinculosLancamento] = useState<Lancamento | null>(null)
   const [adicionandoVinculo, setAdicionandoVinculo] = useState(false)
   const [transacaoSelecionada, setTransacaoSelecionada] = useState<TransacaoParaVincular | null>(null)
-  const [valorVinculado, setValorVinculado] = useState('')
 
   const { data, isLoading } = useQuery({
     queryKey: ['lancamentos', page, filters],
@@ -145,25 +144,24 @@ export default function Lancamentos() {
       lancamentosApi.vincularTransacao(
         vinculosLancamento!.id,
         transacaoSelecionada!.id,
-        parseFloat(valorVinculado),
+        transacaoSelecionada!.valor,
       ),
     onSuccess: () => {
       toast({ variant: 'success', title: 'Transação vinculada!' })
       setAdicionandoVinculo(false)
       setTransacaoSelecionada(null)
-      setValorVinculado('')
       queryClient.invalidateQueries({ queryKey: ['lancamento-vinculos', vinculosLancamento?.id] })
       queryClient.invalidateQueries({ queryKey: ['lancamento-transacoes-para-vincular', vinculosLancamento?.id] })
       invalidate()
     },
-    onError: () => toast({ variant: 'destructive', title: 'Erro ao vincular transação.' }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onError: (err: any) => toast({ variant: 'destructive', title: err?.response?.data?.detail ?? 'Erro ao vincular transação.' }),
   })
 
   const fecharVinculos = () => {
     setVinculosLancamento(null)
     setAdicionandoVinculo(false)
     setTransacaoSelecionada(null)
-    setValorVinculado('')
   }
 
   const createMutation = useMutation({
@@ -614,7 +612,7 @@ export default function Lancamentos() {
                         <TableRow
                           key={t.id}
                           className={`cursor-pointer ${transacaoSelecionada?.id === t.id ? 'bg-primary/10' : 'hover:bg-muted/50'}`}
-                          onClick={() => { setTransacaoSelecionada(t); setValorVinculado(String(t.valor)) }}
+                          onClick={() => setTransacaoSelecionada(t)}
                         >
                           <TableCell>
                             <input type="radio" readOnly checked={transacaoSelecionada?.id === t.id} className="accent-primary" />
@@ -629,27 +627,37 @@ export default function Lancamentos() {
                   </Table>
                 </div>
               )}
-              {transacaoSelecionada && (
-                <div className="space-y-2">
-                  <Label>Valor a vincular *</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    value={valorVinculado}
-                    onChange={(e) => setValorVinculado(e.target.value)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Valor da transação: {formatCurrency(transacaoSelecionada.valor)} — pode ser menor se o pagamento for parcial.
-                  </p>
-                </div>
-              )}
+              {transacaoSelecionada && (() => {
+                const restante = (vinculosLancamento?.valor_total ?? 0) - (vinculosLancamento?.valor_pago ?? 0)
+                const bate = Math.abs(transacaoSelecionada.valor - restante) < 0.005
+                return (
+                  <div className={`rounded-md border px-4 py-3 text-sm space-y-1 ${bate ? 'border-border bg-muted/40' : 'border-destructive/50 bg-destructive/5'}`}>
+                    <div className="flex justify-between">
+                      <span>Valor da transação:</span>
+                      <strong>{formatCurrency(transacaoSelecionada.valor)}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Saldo restante do lançamento:</span>
+                      <strong>{formatCurrency(restante)}</strong>
+                    </div>
+                    {!bate && (
+                      <p className="text-destructive text-xs pt-1">
+                        Os valores não batem. O vínculo só pode ser feito quando a transação cobre exatamente o saldo restante do lançamento.
+                      </p>
+                    )}
+                  </div>
+                )
+              })()}
               <DialogFooter>
                 <Button variant="outline" onClick={() => { setAdicionandoVinculo(false); setTransacaoSelecionada(null) }}>
                   Voltar
                 </Button>
                 <Button
-                  disabled={!transacaoSelecionada || !valorVinculado || parseFloat(valorVinculado) <= 0 || vincularMutation.isPending}
+                  disabled={
+                    !transacaoSelecionada ||
+                    Math.abs(transacaoSelecionada.valor - ((vinculosLancamento?.valor_total ?? 0) - (vinculosLancamento?.valor_pago ?? 0))) >= 0.005 ||
+                    vincularMutation.isPending
+                  }
                   onClick={() => vincularMutation.mutate()}
                 >
                   {vincularMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}

@@ -75,6 +75,15 @@ export interface Paginated<T> {
   per_page: number
 }
 
+export interface VinculoTransacao {
+  id: number
+  lancamento_id: number
+  lancamento_descricao: string | null
+  lancamento_data: string | null
+  lancamento_categoria: string | null
+  valor_vinculado: number
+}
+
 export interface VinculoLancamento {
   id: number
   transacao_id: number

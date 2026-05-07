@@ -136,7 +136,8 @@ export default function Conciliacao() {
       queryClient.invalidateQueries({ queryKey: ['conciliacao'] })
       queryClient.invalidateQueries({ queryKey: ['lancamentos'] })
     },
-    onError: () => toast({ variant: 'destructive', title: 'Erro ao vincular transação.' }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onError: (err: any) => toast({ variant: 'destructive', title: err?.response?.data?.detail ?? 'Erro ao vincular transação.' }),
   })
 
   const abrirVincular = (t: Transacao) => {

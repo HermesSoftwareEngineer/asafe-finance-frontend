@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Plus, Pencil, Trash2, Loader2, ChevronLeft, ChevronRight, Link2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Loader2, ChevronLeft, ChevronRight, Link2, Eye, X } from 'lucide-react'
 import { transacoesApi, contasApi } from '../../lib/api'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { toast } from '../../hooks/useToast'
@@ -27,7 +27,7 @@ import {
   TableRow,
 } from '../../components/ui/table'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import type { Transacao, Conta, LancamentoParaVincular } from '../../types'
+import type { Transacao, Conta, LancamentoParaVincular, VinculoTransacao } from '../../types'
 
 const schema = z.object({
   descricao: z.string().min(1, 'Descrição obrigatória'),
@@ -40,15 +40,16 @@ const schema = z.object({
 
 type FormData = z.infer<typeof schema>
 
+// valores em minúsculo — normalizados pelo backend ao salvar
 const FORMAS_PAGAMENTO = [
-  'Transferência',
-  'PIX',
-  'Boleto',
-  'Débito',
-  'Crédito',
-  'Dinheiro',
-  'Cheque',
-  'Outro',
+  { label: 'PIX', value: 'pix' },
+  { label: 'TED', value: 'ted' },
+  { label: 'DOC', value: 'doc' },
+  { label: 'Boleto', value: 'boleto' },
+  { label: 'Débito', value: 'debito' },
+  { label: 'Crédito', value: 'credito' },
+  { label: 'Dinheiro', value: 'dinheiro' },
+  { label: 'Outro', value: 'outro' },
 ]
 
 export default function Transacoes() {
@@ -66,7 +67,8 @@ export default function Transacoes() {
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [vinculandoTransacao, setVinculandoTransacao] = useState<Transacao | null>(null)
   const [lancamentoSelecionado, setLancamentoSelecionado] = useState<LancamentoParaVincular | null>(null)
-  const [valorVinculado, setValorVinculado] = useState('')
+  const [visualizandoTransacao, setVisualizandoTransacao] = useState<Transacao | null>(null)
+  const [confirmDesvincularTodos, setConfirmDesvincularTodos] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['transacoes', page, filters],
@@ -107,28 +109,43 @@ export default function Transacoes() {
       transacoesApi.vincular(
         vinculandoTransacao!.id,
         lancamentoSelecionado!.id,
-        parseFloat(valorVinculado),
+        vinculandoTransacao!.valor,
       ),
     onSuccess: () => {
       toast({ variant: 'success', title: 'Transação vinculada com sucesso!' })
       setVinculandoTransacao(null)
       setLancamentoSelecionado(null)
-      setValorVinculado('')
       invalidate()
     },
-    onError: () => toast({ variant: 'destructive', title: 'Erro ao vincular transação.' }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onError: (err: any) => toast({ variant: 'destructive', title: err?.response?.data?.detail ?? 'Erro ao vincular transação.' }),
+  })
+
+  const { data: vinculosTransacao, isLoading: loadingVinculos } = useQuery<VinculoTransacao[]>({
+    queryKey: ['transacao-vinculos', visualizandoTransacao?.id],
+    queryFn: () => transacoesApi.vinculos(visualizandoTransacao!.id).then(r => r.data),
+    enabled: !!visualizandoTransacao,
+  })
+
+  const desvincularTodosMutation = useMutation({
+    mutationFn: () => transacoesApi.desvincularTodos(visualizandoTransacao!.id),
+    onSuccess: () => {
+      toast({ variant: 'success', title: 'Vínculos removidos.' })
+      setConfirmDesvincularTodos(false)
+      setVisualizandoTransacao(null)
+      invalidate()
+    },
+    onError: () => toast({ variant: 'destructive', title: 'Erro ao remover vínculos.' }),
   })
 
   const abrirVincular = (t: Transacao) => {
     setVinculandoTransacao(t)
     setLancamentoSelecionado(null)
-    setValorVinculado(String(t.valor))
   }
 
   const fecharVincular = () => {
     setVinculandoTransacao(null)
     setLancamentoSelecionado(null)
-    setValorVinculado('')
   }
 
   const createMutation = useMutation({
@@ -258,13 +275,26 @@ export default function Transacoes() {
               onChange={(e) => { setFilters(f => ({ ...f, forma_pagamento: e.target.value })); setPage(1) }}
             >
               <option value="">Todas</option>
-              {FORMAS_PAGAMENTO.map(f => <option key={f} value={f}>{f}</option>)}
+              {FORMAS_PAGAMENTO.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
             </select>
           </div>
-          <Button onClick={openNew} className="gap-2">
-            <Plus size={16} />
-            Nova
-          </Button>
+          <div className="flex gap-2">
+            {Object.values(filters).some(Boolean) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground gap-1"
+                onClick={() => { setFilters({ conta_id: '', status_conciliacao: '', forma_pagamento: '', data_inicio: '', data_fim: '' }); setPage(1) }}
+              >
+                <X size={14} />
+                Limpar
+              </Button>
+            )}
+            <Button onClick={openNew} className="gap-2">
+              <Plus size={16} />
+              Nova
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -318,6 +348,17 @@ export default function Transacoes() {
                           onClick={() => abrirVincular(t)}
                         >
                           <Link2 size={14} />
+                        </Button>
+                      )}
+                      {t.status_conciliacao === 'conciliado' && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="hover:text-primary"
+                          title="Visualizar vínculos"
+                          onClick={() => setVisualizandoTransacao(t)}
+                        >
+                          <Eye size={14} />
                         </Button>
                       )}
                       <Button variant="ghost" size="icon" onClick={() => openEdit(t)}>
@@ -415,7 +456,7 @@ export default function Transacoes() {
                 {...register('forma_pagamento')}
               >
                 <option value="">Selecione</option>
-                {FORMAS_PAGAMENTO.map(f => <option key={f} value={f}>{f}</option>)}
+                {FORMAS_PAGAMENTO.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
               </select>
               {errors.forma_pagamento && <p className="text-xs text-destructive">{errors.forma_pagamento.message}</p>}
             </div>
@@ -439,6 +480,84 @@ export default function Transacoes() {
         onConfirm={() => deleteId !== null && deleteMutation.mutate(deleteId)}
         onCancel={() => setDeleteId(null)}
       />
+
+      {/* Dialog de Visualização de Vínculos */}
+      <Dialog open={!!visualizandoTransacao} onOpenChange={(o) => { if (!o) { setVisualizandoTransacao(null); setConfirmDesvincularTodos(false) } }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Vínculos da Transação</DialogTitle>
+            {visualizandoTransacao && (
+              <p className="text-sm text-muted-foreground pt-1">
+                {visualizandoTransacao.descricao}{' '}—{' '}
+                <strong className="text-foreground">{formatCurrency(visualizandoTransacao.valor)}</strong>
+              </p>
+            )}
+          </DialogHeader>
+
+          {loadingVinculos ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            </div>
+          ) : !vinculosTransacao?.length ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              Nenhum vínculo encontrado para esta transação.
+            </p>
+          ) : (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Lançamento</TableHead>
+                    <TableHead>Categoria</TableHead>
+                    <TableHead>Data</TableHead>
+                    <TableHead className="text-right">Valor Vinculado</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {vinculosTransacao.map((v) => (
+                    <TableRow key={v.id}>
+                      <TableCell className="font-medium">{v.lancamento_descricao ?? '—'}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{v.lancamento_categoria ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{v.lancamento_data ? formatDate(v.lancamento_data) : '—'}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(v.valor_vinculado)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          {confirmDesvincularTodos ? (
+            <div className="rounded-md border border-destructive/50 bg-destructive/5 px-4 py-3 text-sm space-y-3">
+              <p className="text-destructive font-medium">Confirmar remoção de todos os vínculos?</p>
+              <p className="text-muted-foreground text-xs">A transação voltará ao status "Pendente" e os lançamentos serão atualizados.</p>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" size="sm" onClick={() => setConfirmDesvincularTodos(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={desvincularTodosMutation.isPending}
+                  onClick={() => desvincularTodosMutation.mutate()}
+                >
+                  {desvincularTodosMutation.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+                  Confirmar
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setVisualizandoTransacao(null)}>Fechar</Button>
+              {vinculosTransacao?.length ? (
+                <Button variant="destructive" onClick={() => setConfirmDesvincularTodos(true)}>
+                  Desvincular tudo
+                </Button>
+              ) : null}
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog de Vinculação */}
       <Dialog open={!!vinculandoTransacao} onOpenChange={(o) => { if (!o) fecharVincular() }}>
@@ -506,28 +625,37 @@ export default function Transacoes() {
               </div>
             )}
 
-            {lancamentoSelecionado && (
-              <div className="space-y-2">
-                <Label>Valor a vincular *</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={valorVinculado}
-                  onChange={(e) => setValorVinculado(e.target.value)}
-                  placeholder="0,00"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Valor da transação: {vinculandoTransacao && formatCurrency(vinculandoTransacao.valor)}
-                </p>
-              </div>
-            )}
+            {lancamentoSelecionado && (() => {
+              const restante = lancamentoSelecionado.valor_total - lancamentoSelecionado.valor_pago
+              const bate = Math.abs(restante - (vinculandoTransacao?.valor ?? 0)) < 0.005
+              return (
+                <div className={`rounded-md border px-4 py-3 text-sm space-y-1 ${bate ? 'border-border bg-muted/40' : 'border-destructive/50 bg-destructive/5'}`}>
+                  <div className="flex justify-between">
+                    <span>Valor da transação:</span>
+                    <strong>{vinculandoTransacao && formatCurrency(vinculandoTransacao.valor)}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Saldo restante do lançamento:</span>
+                    <strong>{formatCurrency(restante)}</strong>
+                  </div>
+                  {!bate && (
+                    <p className="text-destructive text-xs pt-1">
+                      Os valores não batem. O vínculo só pode ser feito quando a transação cobre exatamente o saldo restante do lançamento.
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={fecharVincular}>Cancelar</Button>
             <Button
-              disabled={!lancamentoSelecionado || !valorVinculado || parseFloat(valorVinculado) <= 0 || vincularMutation.isPending}
+              disabled={
+                !lancamentoSelecionado ||
+                Math.abs((lancamentoSelecionado.valor_total - lancamentoSelecionado.valor_pago) - (vinculandoTransacao?.valor ?? 0)) >= 0.005 ||
+                vincularMutation.isPending
+              }
               onClick={() => vincularMutation.mutate()}
             >
               {vincularMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
