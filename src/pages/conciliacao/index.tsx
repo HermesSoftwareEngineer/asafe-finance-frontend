@@ -27,10 +27,6 @@ import {
 import { Input } from '../../components/ui/input'
 import type { Conta, Categoria, LancamentoParaVincular, Transacao } from '../../types'
 
-interface PendentesData {
-  transacoes: Transacao[]
-}
-
 interface HistoricoItem {
   id: number
   arquivo_nome: string

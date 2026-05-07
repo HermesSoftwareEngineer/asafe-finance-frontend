@@ -108,8 +108,8 @@ export default function Dashboard() {
       legend: { position: 'top' as const },
       tooltip: {
         callbacks: {
-          label: (ctx: { dataset: { label?: string }; parsed: { y: number } }) =>
-            `${ctx.dataset.label}: ${formatCurrency(ctx.parsed.y)}`,
+          label: (ctx: { dataset: { label?: string }; parsed: { y: number | null } }) =>
+            `${ctx.dataset.label}: ${formatCurrency(ctx.parsed.y ?? 0)}`,
         },
       },
     },
