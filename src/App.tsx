@@ -1,3 +1,4 @@
+import { Component } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import { Layout } from './components/Layout'
@@ -13,6 +14,37 @@ import CentrosCusto from './pages/cadastros/CentrosCusto'
 import Usuarios from './pages/cadastros/Usuarios'
 import AlterarSenha from './pages/AlterarSenha'
 import { Loader2 } from 'lucide-react'
+
+class ErrorBoundary extends Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-background text-foreground">
+          <p className="text-lg font-medium">Algo deu errado.</p>
+          <button
+            className="text-sm underline text-muted-foreground hover:text-foreground"
+            onClick={() => window.location.reload()}
+          >
+            Recarregar página
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
@@ -34,6 +66,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -151,5 +184,6 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
+    </ErrorBoundary>
   )
 }
