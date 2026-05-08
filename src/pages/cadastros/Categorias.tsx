@@ -31,6 +31,7 @@ import type { Categoria } from '../../types'
 const schema = z.object({
   nome: z.string().min(1, 'Nome obrigatório'),
   tipo: z.string().min(1, 'Tipo obrigatório'),
+  icone: z.string().optional(),
   categoria_pai_id: z.coerce.number().nullable().optional(),
   cor: z.string().default('#22c55e'),
   ativo: z.boolean().default(true),
@@ -64,7 +65,7 @@ export default function Categorias() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['categorias'] })
 
   const createMutation = useMutation({
-    mutationFn: (d: FormData) => categoriasApi.create({ ...d, categoria_pai_id: d.categoria_pai_id ?? null }),
+    mutationFn: (d: FormData) => categoriasApi.create({ ...d, icone: d.icone || null, categoria_pai_id: d.categoria_pai_id ?? null }),
     onSuccess: () => {
       toast({ variant: 'success', title: 'Categoria criada!' })
       setDialogOpen(false)
@@ -75,7 +76,7 @@ export default function Categorias() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: (d: FormData) => categoriasApi.update(editing!.id, { ...d, categoria_pai_id: d.categoria_pai_id ?? null }),
+    mutationFn: (d: FormData) => categoriasApi.update(editing!.id, { ...d, icone: d.icone || null, categoria_pai_id: d.categoria_pai_id ?? null }),
     onSuccess: () => {
       toast({ variant: 'success', title: 'Categoria atualizada!' })
       setDialogOpen(false)
@@ -98,7 +99,7 @@ export default function Categorias() {
 
   const openNew = (paiId?: number) => {
     setEditing(null)
-    reset({ nome: '', tipo: '', categoria_pai_id: paiId ?? null, cor: '#22c55e', ativo: true })
+    reset({ nome: '', tipo: '', icone: '', categoria_pai_id: paiId ?? null, cor: '#22c55e', ativo: true })
     setDialogOpen(true)
   }
 
@@ -107,6 +108,7 @@ export default function Categorias() {
     reset({
       nome: c.nome,
       tipo: c.tipo,
+      icone: c.icone ?? '',
       categoria_pai_id: c.categoria_pai_id,
       cor: c.cor,
       ativo: c.ativo,
@@ -152,6 +154,7 @@ export default function Categorias() {
             <TableHeader>
               <TableRow>
                 <TableHead>Nome</TableHead>
+                <TableHead>Ícone</TableHead>
                 <TableHead>Tipo</TableHead>
                 <TableHead>Cor</TableHead>
                 <TableHead>Status</TableHead>
@@ -183,6 +186,9 @@ export default function Categorias() {
                             <Badge variant="secondary" className="text-xs">{subs.length} sub</Badge>
                           )}
                         </div>
+                      </TableCell>
+                      <TableCell className="text-lg">
+                        {cat.icone || <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell>
                         <Badge variant={cat.tipo === 'entrada' ? 'entrada' : 'saida'}>
@@ -229,6 +235,9 @@ export default function Categorias() {
                         <TableCell className="pl-10">
                           <span className="text-muted-foreground mr-2">└</span>
                           {sub.nome}
+                        </TableCell>
+                        <TableCell className="text-lg">
+                          {sub.icone || <span className="text-xs text-muted-foreground">—</span>}
                         </TableCell>
                         <TableCell>
                           <Badge variant={sub.tipo === 'entrada' ? 'entrada' : 'saida'}>
@@ -308,6 +317,12 @@ export default function Categorias() {
                   <option key={c.id} value={c.id}>{c.nome}</option>
                 ))}
               </select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Ícone</Label>
+              <Input {...register('icone')} placeholder="Emoji ou nome (ex: 🎵, music)" />
+              <p className="text-xs text-muted-foreground">Opcional. Pode ser um emoji (🎵) ou nome de ícone.</p>
             </div>
 
             <div className="flex items-center gap-4">

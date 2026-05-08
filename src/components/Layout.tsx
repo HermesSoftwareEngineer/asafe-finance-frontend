@@ -5,7 +5,6 @@ import { Toaster } from './ui/toaster'
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Dashboard',
   '/lancamentos': 'Lançamentos',
-  '/transacoes': 'Transações',
   '/conciliacao': 'Conciliação Bancária',
   '/relatorios': 'Relatórios',
   '/cadastros/contas': 'Contas',

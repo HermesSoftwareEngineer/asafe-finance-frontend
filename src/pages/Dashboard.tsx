@@ -15,8 +15,9 @@ import {
   Wallet,
   TrendingUp,
   TrendingDown,
-  AlertCircle,
   Clock,
+  FileSearch,
+  AlertTriangle,
   Loader2,
 } from 'lucide-react'
 import { dashboardApi } from '../lib/api'
@@ -122,10 +123,15 @@ export default function Dashboard() {
     },
   }
 
+  const hasAlerts =
+    data.lancamentos_vencidos > 0 ||
+    data.ofx_pendentes > 0 ||
+    data.lancamentos_nao_conciliados > 0
+
   return (
     <div className="space-y-6">
       {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <SummaryCard
           title="Saldo Total"
           value={formatCurrency(data.saldo_total)}
@@ -147,22 +153,35 @@ export default function Dashboard() {
           color="text-red-600"
           bg="bg-red-50"
         />
-        <SummaryCard
-          title="Pendentes Conciliação"
-          value={String(data.pendentes_conciliacao)}
-          icon={<AlertCircle className="w-6 h-6 text-yellow-600" />}
-          color="text-yellow-600"
-          bg="bg-yellow-50"
-        />
       </div>
 
-      {/* Alert for overdue */}
-      {data.lancamentos_vencidos > 0 && (
-        <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-4 py-3">
-          <Clock className="w-5 h-5 text-orange-600 flex-shrink-0" />
-          <p className="text-sm text-orange-800">
-            <strong>{data.lancamentos_vencidos}</strong> lançamento(s) vencido(s) sem realização.
-          </p>
+      {/* Alert strip */}
+      {hasAlerts && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {data.lancamentos_vencidos > 0 && (
+            <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-lg px-4 py-3">
+              <Clock className="w-5 h-5 text-orange-600 flex-shrink-0" />
+              <p className="text-sm text-orange-800">
+                <strong>{data.lancamentos_vencidos}</strong> lançamento(s) vencido(s)
+              </p>
+            </div>
+          )}
+          {data.ofx_pendentes > 0 && (
+            <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+              <FileSearch className="w-5 h-5 text-blue-600 flex-shrink-0" />
+              <p className="text-sm text-blue-800">
+                <strong>{data.ofx_pendentes}</strong> transação(ões) OFX pendente(s)
+              </p>
+            </div>
+          )}
+          {data.lancamentos_nao_conciliados > 0 && (
+            <div className="flex items-center gap-3 bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3">
+              <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0" />
+              <p className="text-sm text-yellow-800">
+                <strong>{data.lancamentos_nao_conciliados}</strong> lançamento(s) sem conciliação
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -170,7 +189,7 @@ export default function Dashboard() {
         {/* Chart */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-base">Fluxo do Mês</CardTitle>
+            <CardTitle className="text-base">Fluxo do Mês (Pagos)</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-64">
@@ -178,7 +197,7 @@ export default function Dashboard() {
                 <Line data={chartData} options={chartOptions} />
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                  Nenhuma transação no mês atual.
+                  Nenhum lançamento pago no mês atual.
                 </div>
               )}
             </div>
@@ -196,7 +215,10 @@ export default function Dashboard() {
             ) : (
               <div className="space-y-3">
                 {data.saldos_conta.map((conta) => (
-                  <div key={conta.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                  <div
+                    key={conta.id}
+                    className="flex items-center justify-between py-2 border-b border-border last:border-0"
+                  >
                     <div>
                       <p className="text-sm font-medium">{conta.nome}</p>
                       <p className="text-xs text-muted-foreground capitalize">{conta.tipo}</p>

@@ -14,6 +14,10 @@ const badgeVariants = cva(
         destructive:
           'border-transparent bg-destructive text-destructive-foreground',
         outline: 'text-foreground',
+        pago:
+          'border-transparent bg-green-100 text-green-800',
+        a_pagar:
+          'border-transparent bg-gray-100 text-gray-600',
         previsto:
           'border-transparent bg-yellow-100 text-yellow-800',
         parcial:

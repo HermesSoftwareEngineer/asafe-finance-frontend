@@ -5,7 +5,6 @@ import { Layout } from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Lancamentos from './pages/lancamentos'
-import Transacoes from './pages/transacoes'
 import Conciliacao from './pages/conciliacao'
 import Relatorios from './pages/relatorios'
 import Contas from './pages/cadastros/Contas'
@@ -88,17 +87,6 @@ export default function App() {
             <ProtectedRoute>
               <Layout>
                 <Lancamentos />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/transacoes"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Transacoes />
               </Layout>
             </ProtectedRoute>
           }

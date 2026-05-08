@@ -2,7 +2,6 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   FileText,
-  CreditCard,
   RefreshCw,
   BarChart2,
   Briefcase,
@@ -81,7 +80,6 @@ export function Sidebar() {
       <nav className="flex-1 px-3 py-4 space-y-0.5">
         <NavItem to="/" icon={<LayoutDashboard size={18} />} label="Dashboard" />
         <NavItem to="/lancamentos" icon={<FileText size={18} />} label="Lançamentos" />
-        <NavItem to="/transacoes" icon={<CreditCard size={18} />} label="Transações" />
         <NavItem to="/conciliacao" icon={<RefreshCw size={18} />} label="Conciliação" />
         <NavItem to="/relatorios" icon={<BarChart2 size={18} />} label="Relatórios" />
 

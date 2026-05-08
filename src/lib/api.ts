@@ -4,14 +4,11 @@ import type {
   Categoria,
   CentroCusto,
   Lancamento,
-  LancamentoParaVincular,
-  TransacaoParaVincular,
-  VinculoLancamento,
-  VinculoTransacao,
-  Transacao,
   DashboardData,
   Paginated,
   User,
+  OfxTransacao,
+  OfxHistorico,
 } from '../types'
 
 const BASE_URL = import.meta.env.VITE_API_URL
@@ -61,8 +58,11 @@ export const lancamentosApi = {
     page?: number
     tipo?: string
     status?: string
+    tipo_recorrencia?: string
+    status_conciliacao?: string
     categoria_id?: number
     centro_custo_id?: number
+    conta_id?: number
     data_inicio?: string
     data_fim?: string
   }) => api.get<Paginated<Lancamento>>('/lancamentos', { params }),
@@ -70,90 +70,62 @@ export const lancamentosApi = {
     descricao: string
     tipo: string
     valor_total: number
-    data_competencia: string
+    data: string
+    status: string
+    conta_id: number
     categoria_id?: number | null
     centro_custo_id?: number | null
     observacao?: string | null
-  }) => api.post<Lancamento>('/lancamentos', data),
+    tipo_recorrencia?: string
+    frequencia_recorrencia?: string | null
+    total_parcelas?: number | null
+  }) => api.post('/lancamentos', data),
   update: (
     id: number,
     data: {
       descricao: string
       tipo: string
       valor_total: number
-      data_competencia: string
+      data: string
+      status: string
+      conta_id: number
       categoria_id?: number | null
       centro_custo_id?: number | null
       observacao?: string | null
+      tipo_recorrencia?: string
+      frequencia_recorrencia?: string | null
     }
   ) => api.put<Lancamento>(`/lancamentos/${id}`, data),
   delete: (id: number) => api.delete(`/lancamentos/${id}`),
-  vinculos: (id: number) => api.get<VinculoLancamento[]>(`/lancamentos/${id}/vinculos`),
-  desvincular: (lancamentoId: number, vinculoId: number) =>
-    api.delete(`/lancamentos/${lancamentoId}/vinculos/${vinculoId}`),
-  transacoesParaVincular: (id: number) =>
-    api.get<TransacaoParaVincular[]>(`/lancamentos/${id}/transacoes-para-vincular`),
-  vincularTransacao: (id: number, transacao_id: number, valor_vinculado: number) =>
-    api.post(`/transacoes/${transacao_id}/vincular`, { lancamento_id: id, valor_vinculado }),
+  getSerie: (id: number) =>
+    api.get<{ total: number; lancamentos: Lancamento[] }>(`/lancamentos/${id}/serie`),
+  deleteSerie: (id: number) =>
+    api.delete<{ ok: boolean; total_excluidos: number }>(`/lancamentos/${id}/serie`),
+  gerarProximo: (id: number) =>
+    api.post<Lancamento>(`/lancamentos/${id}/gerar-proximo`),
 }
 
-// ─── Transações ───────────────────────────────────────────────────────────────
-export const transacoesApi = {
-  list: (params: {
-    page?: number
-    conta_id?: number
-    status_conciliacao?: string
-    forma_pagamento?: string
-    data_inicio?: string
-    data_fim?: string
-  }) => api.get<Paginated<Transacao>>('/transacoes', { params }),
-  create: (data: {
-    descricao: string
-    tipo: string
-    valor: number
-    data_pagamento: string
-    conta_id: number
-    forma_pagamento: string
-  }) => api.post<Transacao>('/transacoes', data),
-  update: (
-    id: number,
-    data: {
-      descricao: string
-      tipo: string
-      valor: number
-      data_pagamento: string
-      conta_id: number
-      forma_pagamento: string
-    }
-  ) => api.put<Transacao>(`/transacoes/${id}`, data),
-  delete: (id: number) => api.delete(`/transacoes/${id}`),
-  lancamentosParaVincular: (id: number) =>
-    api.get<LancamentoParaVincular[]>(`/transacoes/${id}/lancamentos-para-vincular`),
-  vincular: (id: number, lancamento_id: number, valor_vinculado: number) =>
-    api.post(`/transacoes/${id}/vincular`, { lancamento_id, valor_vinculado }),
-  vinculos: (id: number) =>
-    api.get<VinculoTransacao[]>(`/transacoes/${id}/vinculos`),
-  desvincularTodos: (id: number) =>
-    api.delete(`/transacoes/${id}/vinculos`),
-}
-
-// ─── Conciliação ──────────────────────────────────────────────────────────────
+// ─── Conciliação Bancária ─────────────────────────────────────────────────────
 export const conciliacaoApi = {
-  getPendentes: () => api.get('/conciliacao/pendentes'),
-  getHistorico: () => api.get('/conciliacao/historico'),
-  uploadOfx: (formData: FormData) =>
-    api.post('/conciliacao/upload', formData, {
+  upload: (conta_id: number, file: File) => {
+    const fd = new FormData()
+    fd.append('conta_id', String(conta_id))
+    fd.append('file', file)
+    return api.post('/conciliacao/upload', fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
-    }),
-  vincular: (transacaoId: number, lancamentoId: number, valorVinculado: number) =>
-    api.post(`/conciliacao/vincular/${transacaoId}`, {
-      lancamento_id: lancamentoId,
-      valor_vinculado: valorVinculado,
-    }),
-  ignorar: (transacaoId: number) =>
-    api.post(`/conciliacao/ignorar/${transacaoId}`),
-  criarLancamento: (transacaoId: number, data: { descricao: string; categoria_id?: number | null }) =>
-    api.post(`/conciliacao/criar-lancamento/${transacaoId}`, data),
+    })
+  },
+  pendentes: (params?: { conta_id?: number; com_sugestoes?: boolean; page?: number }) =>
+    api.get<Paginated<OfxTransacao>>('/conciliacao/pendentes', { params }),
+  vincular: (ofx_id: number, lancamento_id: number) =>
+    api.put(`/conciliacao/vincular/${ofx_id}`, { lancamento_id }),
+  criarLancamento: (
+    ofx_id: number,
+    data: { categoria_id?: number | null; centro_custo_id?: number | null; observacao?: string | null }
+  ) => api.put(`/conciliacao/criar-lancamento/${ofx_id}`, data),
+  ignorar: (ofx_id: number) => api.put(`/conciliacao/ignorar/${ofx_id}`),
+  desvincular: (ofx_id: number) => api.put(`/conciliacao/desvincular/${ofx_id}`),
+  historico: () => api.get<OfxHistorico[]>('/conciliacao/historico'),
 }
 
 // ─── Relatórios ───────────────────────────────────────────────────────────────
@@ -166,6 +138,8 @@ export const relatoriosApi = {
     api.get('/relatorios/por-centro-custo', { params }),
   previstoRealizado: (params: { data_inicio?: string; data_fim?: string }) =>
     api.get('/relatorios/previsto-realizado', { params }),
+  extratoConta: (params: { conta_id: number; data_inicio?: string; data_fim?: string }) =>
+    api.get('/relatorios/extrato-conta', { params }),
 }
 
 // ─── Contas ───────────────────────────────────────────────────────────────────
@@ -184,6 +158,7 @@ export const categoriasApi = {
   create: (data: {
     nome: string
     tipo: string
+    icone?: string | null
     categoria_pai_id?: number | null
     cor?: string
     ativo?: boolean
@@ -193,6 +168,7 @@ export const categoriasApi = {
     data: {
       nome: string
       tipo: string
+      icone?: string | null
       categoria_pai_id?: number | null
       cor?: string
       ativo?: boolean

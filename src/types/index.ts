@@ -18,6 +18,7 @@ export interface Categoria {
   nome: string
   tipo: string
   cor: string
+  icone: string | null
   categoria_pai_id: number | null
   ativo: boolean
   subcategorias?: Categoria[]
@@ -34,34 +35,32 @@ export interface Lancamento {
   descricao: string
   tipo: 'entrada' | 'saida'
   valor_total: number
-  valor_pago: number
-  data_competencia: string
-  status: 'previsto' | 'parcial' | 'realizado'
+  data: string
+  status: 'pago' | 'a pagar'
+  tipo_recorrencia: 'unico' | 'fixo' | 'parcelado'
+  frequencia_recorrencia: 'diaria' | 'semanal' | 'quinzenal' | 'mensal' | null
+  total_parcelas: number | null
+  numero_parcela: number | null
+  lancamento_pai_id: number | null
+  status_conciliacao: 'pendente' | 'conciliado' | 'ignorado' | null
+  ofx_transaction_id: string | null
+  conta_id: number
+  conta_nome: string | null
   categoria_id: number | null
   categoria_nome: string | null
+  categoria_icone: string | null
   centro_custo_id: number | null
   centro_custo_nome: string | null
   observacao: string | null
-}
-
-export interface Transacao {
-  id: number
-  descricao: string
-  tipo: 'entrada' | 'saida'
-  valor: number
-  data_pagamento: string
-  conta_id: number
-  conta_nome: string
-  forma_pagamento: string
-  status_conciliacao: 'pendente' | 'conciliado' | 'ignorado'
 }
 
 export interface DashboardData {
   saldo_total: number
   entradas_mes: number
   saidas_mes: number
-  pendentes_conciliacao: number
   lancamentos_vencidos: number
+  ofx_pendentes: number
+  lancamentos_nao_conciliados: number
   saldos_conta: { id: number; nome: string; tipo: string; saldo: number }[]
   chart_labels: string[]
   chart_entradas: number[]
@@ -75,51 +74,38 @@ export interface Paginated<T> {
   per_page: number
 }
 
-export interface VinculoTransacao {
+export interface OfxTransacao {
   id: number
-  lancamento_id: number
-  lancamento_descricao: string | null
-  lancamento_data: string | null
-  lancamento_categoria: string | null
-  valor_vinculado: number
-}
-
-export interface VinculoLancamento {
-  id: number
-  transacao_id: number
-  transacao_descricao: string | null
-  transacao_data: string | null
-  transacao_conta: string | null
-  valor_vinculado: number
-}
-
-export interface TransacaoParaVincular {
-  id: number
+  ofx_transaction_id: string
+  conta_id: number
+  conta_nome: string
   descricao: string
   tipo: 'entrada' | 'saida'
   valor: number
-  data_pagamento: string
-  conta_nome: string | null
-  forma_pagamento: string
+  data: string
+  status: 'pendente' | 'conciliado' | 'ignorado'
+  lancamento_id: number | null
+  lancamento_descricao: string | null
+  sugestoes?: OfxSugestao[]
 }
 
-export interface LancamentoParaVincular {
-  id: number
+export interface OfxSugestao {
+  lancamento_id: number
   descricao: string
-  tipo: 'entrada' | 'saida'
   valor_total: number
-  valor_pago: number
-  data_competencia: string
-  status: string
-  categoria_nome: string | null
+  data: string
+  score: number
+  conta_nome: string | null
 }
 
-export interface OfxImport {
+export interface OfxHistorico {
   id: number
   arquivo_nome: string
   conta_id: number
   conta_nome: string
   importadas: number
-  duplicatas: number
+  pendentes: number
+  conciliados: number
+  ignorados: number
   importado_em: string
 }

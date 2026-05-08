@@ -1,10 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Plus, Pencil, Trash2, Loader2, ChevronLeft, ChevronRight, Link2, Unlink } from 'lucide-react'
-import { lancamentosApi, categoriasApi, centrosCustoApi } from '../../lib/api'
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  RotateCw,
+} from 'lucide-react'
+import { lancamentosApi, categoriasApi, centrosCustoApi, contasApi } from '../../lib/api'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { toast } from '../../hooks/useToast'
 import { Button } from '../../components/ui/button'
@@ -28,56 +37,286 @@ import {
   TableRow,
 } from '../../components/ui/table'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import type { Lancamento, Categoria, CentroCusto, TransacaoParaVincular, VinculoLancamento } from '../../types'
+import type { Lancamento, Categoria, CentroCusto, Conta } from '../../types'
 
-const schema = z.object({
-  descricao: z.string().min(1, 'Descrição obrigatória'),
-  tipo: z.enum(['entrada', 'saida'], { required_error: 'Tipo obrigatório' }),
-  valor_total: z.coerce.number().positive('Valor deve ser positivo'),
-  data_competencia: z.string().min(1, 'Data obrigatória'),
-  categoria_id: z.coerce.number().nullable().optional(),
-  centro_custo_id: z.coerce.number().nullable().optional(),
-  observacao: z.string().optional(),
-})
+// ─── Período ──────────────────────────────────────────────────────────────────
+
+type PeriodoModo = 'mes' | 'semana' | 'dia' | 'trimestre' | 'personalizado'
+
+interface Periodo {
+  modo: PeriodoModo
+  offset: number
+  customInicio: string
+  customFim: string
+}
+
+const MESES = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
+]
+
+function toISO(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function computeDates(p: Periodo): { inicio: string; fim: string } {
+  if (p.modo === 'personalizado') return { inicio: p.customInicio, fim: p.customFim }
+  const hoje = new Date()
+  hoje.setHours(0, 0, 0, 0)
+  if (p.modo === 'dia') {
+    const d = new Date(hoje)
+    d.setDate(d.getDate() + p.offset)
+    const s = toISO(d)
+    return { inicio: s, fim: s }
+  }
+  if (p.modo === 'semana') {
+    const d = new Date(hoje)
+    const dow = d.getDay()
+    d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow) + p.offset * 7)
+    const fim = new Date(d)
+    fim.setDate(fim.getDate() + 6)
+    return { inicio: toISO(d), fim: toISO(fim) }
+  }
+  if (p.modo === 'mes') {
+    const start = new Date(hoje.getFullYear(), hoje.getMonth() + p.offset, 1)
+    const end = new Date(start.getFullYear(), start.getMonth() + 1, 0)
+    return { inicio: toISO(start), fim: toISO(end) }
+  }
+  if (p.modo === 'trimestre') {
+    const q = Math.floor(hoje.getMonth() / 3)
+    const qBase = hoje.getFullYear() * 4 + q + p.offset
+    const targetY = Math.floor(qBase / 4)
+    const targetQ = ((qBase % 4) + 4) % 4
+    const start = new Date(targetY, targetQ * 3, 1)
+    const end = new Date(targetY, targetQ * 3 + 3, 0)
+    return { inicio: toISO(start), fim: toISO(end) }
+  }
+  return { inicio: '', fim: '' }
+}
+
+function getPeriodoLabel(p: Periodo): string {
+  if (p.modo === 'personalizado') {
+    if (p.customInicio && p.customFim)
+      return `${formatDate(p.customInicio)} – ${formatDate(p.customFim)}`
+    return 'Período Personalizado'
+  }
+  const hoje = new Date()
+  if (p.modo === 'dia') {
+    if (p.offset === 0) return 'Hoje'
+    if (p.offset === -1) return 'Ontem'
+    return `Dia ${formatDate(computeDates(p).inicio)}`
+  }
+  if (p.modo === 'semana') {
+    if (p.offset === 0) return 'Esta semana'
+    const { inicio, fim } = computeDates(p)
+    return `Semana ${formatDate(inicio)} – ${formatDate(fim)}`
+  }
+  if (p.modo === 'mes') {
+    if (p.offset === 0) return 'Este mês'
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() + p.offset, 1)
+    return `Mês de ${MESES[d.getMonth()]} ${d.getFullYear()}`
+  }
+  if (p.modo === 'trimestre') {
+    if (p.offset === 0) return 'Este trimestre'
+    const q = Math.floor(hoje.getMonth() / 3)
+    const qBase = hoje.getFullYear() * 4 + q + p.offset
+    const targetY = Math.floor(qBase / 4)
+    const targetQ = ((qBase % 4) + 4) % 4
+    return `T${targetQ + 1} ${targetY}`
+  }
+  return ''
+}
+
+const PERIODO_OPCOES: { modo: PeriodoModo; label: string }[] = [
+  { modo: 'mes', label: 'Este mês' },
+  { modo: 'semana', label: 'Esta semana' },
+  { modo: 'dia', label: 'Hoje' },
+  { modo: 'trimestre', label: 'Este trimestre' },
+  { modo: 'personalizado', label: 'Período Personalizado' },
+]
+
+function PeriodoPicker({ value, onChange }: { value: Periodo; onChange: (v: Periodo) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const isCustom = value.modo === 'personalizado'
+
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <div className="flex items-center gap-2">
+        {!isCustom && (
+          <Button variant="outline" size="icon" className="h-9 w-9"
+            onClick={() => onChange({ ...value, offset: value.offset - 1 })}>
+            <ChevronLeft size={16} />
+          </Button>
+        )}
+        <div ref={ref} className="relative">
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            className="flex items-center gap-2 px-5 py-2 border border-border rounded-md bg-card hover:bg-muted/50 font-medium text-sm min-w-[220px] justify-center transition-colors"
+          >
+            <span>{getPeriodoLabel(value)}</span>
+            <ChevronDown size={14} className="text-muted-foreground" />
+          </button>
+          {open && (
+            <div className="absolute top-full mt-1 left-1/2 -translate-x-1/2 z-50 bg-card border border-border rounded-md shadow-md overflow-hidden min-w-[200px]">
+              {PERIODO_OPCOES.map((opt) => (
+                <button key={opt.modo} type="button"
+                  onClick={() => { onChange({ ...value, modo: opt.modo, offset: 0 }); setOpen(false) }}
+                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors hover:bg-muted/50 ${value.modo === opt.modo ? 'text-primary font-semibold bg-primary/5' : ''}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {!isCustom && (
+          <Button variant="outline" size="icon" className="h-9 w-9"
+            onClick={() => onChange({ ...value, offset: value.offset + 1 })}>
+            <ChevronRight size={16} />
+          </Button>
+        )}
+      </div>
+      {isCustom && (
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <Label className="text-xs text-muted-foreground whitespace-nowrap">De</Label>
+            <Input type="date" className="w-36 h-8 text-sm" value={value.customInicio}
+              onChange={(e) => onChange({ ...value, customInicio: e.target.value })} />
+          </div>
+          <span className="text-muted-foreground text-sm">–</span>
+          <div className="flex items-center gap-1.5">
+            <Label className="text-xs text-muted-foreground whitespace-nowrap">Até</Label>
+            <Input type="date" className="w-36 h-8 text-sm" value={value.customFim}
+              onChange={(e) => onChange({ ...value, customFim: e.target.value })} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Constantes de recorrência ────────────────────────────────────────────────
+
+const FREQUENCIAS = [
+  { label: 'Diária', value: 'diaria' },
+  { label: 'Semanal', value: 'semanal' },
+  { label: 'Quinzenal', value: 'quinzenal' },
+  { label: 'Mensal', value: 'mensal' },
+]
+
+const FREQ_LABEL: Record<string, string> = {
+  diaria: 'Diária', semanal: 'Semanal', quinzenal: 'Quinzenal', mensal: 'Mensal',
+}
+
+// ─── Schema ───────────────────────────────────────────────────────────────────
+
+const schema = z
+  .object({
+    descricao: z.string().min(1, 'Descrição obrigatória'),
+    tipo: z.enum(['entrada', 'saida'], { required_error: 'Tipo obrigatório' }),
+    valor_total: z.coerce.number().positive('Valor deve ser positivo'),
+    data: z.string().min(1, 'Data obrigatória'),
+    status: z.enum(['pago', 'a pagar']).default('a pagar'),
+    conta_id: z.coerce.number().min(1, 'Conta obrigatória'),
+    categoria_id: z.coerce.number().nullable().optional(),
+    centro_custo_id: z.coerce.number().nullable().optional(),
+    observacao: z.string().optional(),
+    tipo_recorrencia: z.enum(['unico', 'fixo', 'parcelado']).default('unico'),
+    frequencia_recorrencia: z.enum(['diaria', 'semanal', 'quinzenal', 'mensal']).nullable().optional(),
+    total_parcelas: z.coerce.number().int().min(2).nullable().optional(),
+  })
+  .refine(
+    (d) => d.tipo_recorrencia === 'unico' || !!d.frequencia_recorrencia,
+    { message: 'Frequência obrigatória para fixo e parcelado', path: ['frequencia_recorrencia'] }
+  )
+  .refine(
+    (d) => d.tipo_recorrencia !== 'parcelado' || (d.total_parcelas != null && d.total_parcelas >= 2),
+    { message: 'Informe o número de parcelas (mínimo 2)', path: ['total_parcelas'] }
+  )
 
 type FormData = z.infer<typeof schema>
 
 interface Filters {
   tipo: string
   status: string
-  data_inicio: string
-  data_fim: string
+  tipo_recorrencia: string
+  status_conciliacao: string
   categoria_id: string
+  conta_id: string
 }
+
+const CONCILIACAO_LABEL: Record<string, string> = {
+  pendente: 'Pendente', conciliado: 'Conciliado', ignorado: 'Ignorado',
+}
+const CONCILIACAO_VARIANT: Record<string, 'pendente' | 'conciliado' | 'ignorado'> = {
+  pendente: 'pendente', conciliado: 'conciliado', ignorado: 'ignorado',
+}
+
+function RecorrenciaBadge({ l }: { l: Lancamento }) {
+  if (l.tipo_recorrencia === 'fixo') {
+    return (
+      <span className="text-xs text-muted-foreground">
+        · Fixo {l.frequencia_recorrencia ? `/ ${FREQ_LABEL[l.frequencia_recorrencia]}` : ''}
+      </span>
+    )
+  }
+  if (l.tipo_recorrencia === 'parcelado' && l.numero_parcela && l.total_parcelas) {
+    return (
+      <span className="text-xs text-muted-foreground">
+        · Parcela {l.numero_parcela}/{l.total_parcelas}
+      </span>
+    )
+  }
+  return null
+}
+
+// ─── Página ───────────────────────────────────────────────────────────────────
 
 export default function Lancamentos() {
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
+  const [periodo, setPeriodo] = useState<Periodo>({ modo: 'mes', offset: 0, customInicio: '', customFim: '' })
   const [filters, setFilters] = useState<Filters>({
-    tipo: '',
-    status: '',
-    data_inicio: '',
-    data_fim: '',
-    categoria_id: '',
+    tipo: '', status: '', tipo_recorrencia: '', status_conciliacao: '', categoria_id: '', conta_id: '',
   })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Lancamento | null>(null)
+
+  // delete states
   const [deleteId, setDeleteId] = useState<number | null>(null)
-  const [vinculosLancamento, setVinculosLancamento] = useState<Lancamento | null>(null)
-  const [adicionandoVinculo, setAdicionandoVinculo] = useState(false)
-  const [transacaoSelecionada, setTransacaoSelecionada] = useState<TransacaoParaVincular | null>(null)
+  const [deleteSerieDialog, setDeleteSerieDialog] = useState<Lancamento | null>(null)
+
+  const { inicio: data_inicio, fim: data_fim } = computeDates(periodo)
+
+  const handlePeriodoChange = (v: Periodo) => { setPeriodo(v); setPage(1) }
 
   const { data, isLoading } = useQuery({
-    queryKey: ['lancamentos', page, filters],
+    queryKey: ['lancamentos', page, filters, data_inicio, data_fim],
     queryFn: async () => {
       const params: Record<string, string | number | undefined> = { page }
       if (filters.tipo) params.tipo = filters.tipo
       if (filters.status) params.status = filters.status
-      if (filters.data_inicio) params.data_inicio = filters.data_inicio
-      if (filters.data_fim) params.data_fim = filters.data_fim
+      if (filters.tipo_recorrencia) params.tipo_recorrencia = filters.tipo_recorrencia
+      if (filters.status_conciliacao) params.status_conciliacao = filters.status_conciliacao
       if (filters.categoria_id) params.categoria_id = Number(filters.categoria_id)
-      const res = await lancamentosApi.list(params)
-      return res.data
+      if (filters.conta_id) params.conta_id = Number(filters.conta_id)
+      if (data_inicio) params.data_inicio = data_inicio
+      if (data_fim) params.data_fim = data_fim
+      return (await lancamentosApi.list(params)).data
     },
   })
 
@@ -85,8 +324,6 @@ export default function Lancamentos() {
     queryKey: ['categorias'],
     queryFn: async () => (await categoriasApi.list()).data,
   })
-
-  // Flatten parent + subcategories for selects
   const categorias: Categoria[] = []
   if (categoriasRaw) {
     for (const c of categoriasRaw) {
@@ -99,74 +336,37 @@ export default function Lancamentos() {
     queryKey: ['centros-custo'],
     queryFn: async () => (await centrosCustoApi.list()).data,
   })
+  const { data: contas } = useQuery<Conta[]>({
+    queryKey: ['contas'],
+    queryFn: async () => (await contasApi.list()).data,
+  })
 
   const {
-    register,
-    handleSubmit,
-    reset,
-    setValue,
+    register, handleSubmit, reset, setValue, control,
     formState: { errors },
   } = useForm<FormData>({ resolver: zodResolver(schema) })
 
+  const tipoRecorrencia = useWatch({ control, name: 'tipo_recorrencia', defaultValue: 'unico' })
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['lancamentos'] })
-
-  const { data: vinculos, isLoading: loadingVinculos } = useQuery<VinculoLancamento[]>({
-    queryKey: ['lancamento-vinculos', vinculosLancamento?.id],
-    queryFn: () => lancamentosApi.vinculos(vinculosLancamento!.id).then(r => r.data),
-    enabled: !!vinculosLancamento,
-  })
-
-  const { data: transacoesDisponiveis, isLoading: loadingTransacoes } = useQuery<TransacaoParaVincular[]>({
-    queryKey: ['lancamento-transacoes-para-vincular', vinculosLancamento?.id],
-    queryFn: () => lancamentosApi.transacoesParaVincular(vinculosLancamento!.id).then(r => r.data),
-    enabled: !!vinculosLancamento && adicionandoVinculo,
-  })
-
-  const desvinculaMutation = useMutation({
-    mutationFn: (vinculoId: number) => lancamentosApi.desvincular(vinculosLancamento!.id, vinculoId),
-    onSuccess: () => {
-      toast({ variant: 'success', title: 'Vínculo removido.' })
-      queryClient.invalidateQueries({ queryKey: ['lancamento-vinculos', vinculosLancamento?.id] })
-      invalidate()
-    },
-    onError: () => toast({ variant: 'destructive', title: 'Erro ao remover vínculo.' }),
-  })
-
-  const vincularMutation = useMutation({
-    mutationFn: () =>
-      lancamentosApi.vincularTransacao(
-        vinculosLancamento!.id,
-        transacaoSelecionada!.id,
-        transacaoSelecionada!.valor,
-      ),
-    onSuccess: () => {
-      toast({ variant: 'success', title: 'Transação vinculada!' })
-      setAdicionandoVinculo(false)
-      setTransacaoSelecionada(null)
-      queryClient.invalidateQueries({ queryKey: ['lancamento-vinculos', vinculosLancamento?.id] })
-      queryClient.invalidateQueries({ queryKey: ['lancamento-transacoes-para-vincular', vinculosLancamento?.id] })
-      invalidate()
-    },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    onError: (err: any) => toast({ variant: 'destructive', title: err?.response?.data?.detail ?? 'Erro ao vincular transação.' }),
-  })
-
-  const fecharVinculos = () => {
-    setVinculosLancamento(null)
-    setAdicionandoVinculo(false)
-    setTransacaoSelecionada(null)
-  }
 
   const createMutation = useMutation({
     mutationFn: (d: FormData) =>
       lancamentosApi.create({
-        ...d,
-        categoria_id: d.categoria_id ?? null,
-        centro_custo_id: d.centro_custo_id ?? null,
-        observacao: d.observacao ?? null,
+        descricao: d.descricao, tipo: d.tipo, valor_total: d.valor_total,
+        data: d.data, status: d.status, conta_id: d.conta_id,
+        categoria_id: d.categoria_id ?? null, centro_custo_id: d.centro_custo_id ?? null,
+        observacao: d.observacao || null,
+        tipo_recorrencia: d.tipo_recorrencia,
+        frequencia_recorrencia: d.tipo_recorrencia !== 'unico' ? (d.frequencia_recorrencia ?? null) : null,
+        total_parcelas: d.tipo_recorrencia === 'parcelado' ? (d.total_parcelas ?? null) : null,
       }),
-    onSuccess: () => {
-      toast({ variant: 'success', title: 'Lançamento criado com sucesso!' })
+    onSuccess: (res) => {
+      const d = res.data as { total_criados?: number }
+      const msg = d.total_criados
+        ? `${d.total_criados} parcela(s) criada(s) com sucesso!`
+        : 'Lançamento criado com sucesso!'
+      toast({ variant: 'success', title: msg })
       setDialogOpen(false)
       reset()
       invalidate()
@@ -177,17 +377,16 @@ export default function Lancamentos() {
   const updateMutation = useMutation({
     mutationFn: (d: FormData) =>
       lancamentosApi.update(editing!.id, {
-        ...d,
-        categoria_id: d.categoria_id ?? null,
-        centro_custo_id: d.centro_custo_id ?? null,
-        observacao: d.observacao ?? null,
+        descricao: d.descricao, tipo: d.tipo, valor_total: d.valor_total,
+        data: d.data, status: d.status, conta_id: d.conta_id,
+        categoria_id: d.categoria_id ?? null, centro_custo_id: d.centro_custo_id ?? null,
+        observacao: d.observacao || null,
+        tipo_recorrencia: d.tipo_recorrencia,
+        frequencia_recorrencia: d.tipo_recorrencia !== 'unico' ? (d.frequencia_recorrencia ?? null) : null,
       }),
     onSuccess: () => {
       toast({ variant: 'success', title: 'Lançamento atualizado!' })
-      setDialogOpen(false)
-      setEditing(null)
-      reset()
-      invalidate()
+      setDialogOpen(false); setEditing(null); reset(); invalidate()
     },
     onError: () => toast({ variant: 'destructive', title: 'Erro ao atualizar lançamento.' }),
   })
@@ -196,22 +395,37 @@ export default function Lancamentos() {
     mutationFn: (id: number) => lancamentosApi.delete(id),
     onSuccess: () => {
       toast({ variant: 'success', title: 'Lançamento excluído!' })
-      setDeleteId(null)
-      invalidate()
+      setDeleteId(null); invalidate()
     },
     onError: () => toast({ variant: 'destructive', title: 'Erro ao excluir lançamento.' }),
+  })
+
+  const deleteSerieMutation = useMutation({
+    mutationFn: (id: number) => lancamentosApi.deleteSerie(id),
+    onSuccess: (res) => {
+      const n = (res.data as { total_excluidos?: number }).total_excluidos ?? 0
+      toast({ variant: 'success', title: `Série excluída — ${n} lançamento(s) removido(s).` })
+      setDeleteSerieDialog(null); invalidate()
+    },
+    onError: () => toast({ variant: 'destructive', title: 'Erro ao excluir série.' }),
+  })
+
+  const gerarProximoMutation = useMutation({
+    mutationFn: (id: number) => lancamentosApi.gerarProximo(id),
+    onSuccess: () => {
+      toast({ variant: 'success', title: 'Próxima ocorrência gerada!' })
+      invalidate()
+    },
+    onError: () => toast({ variant: 'destructive', title: 'Erro ao gerar próxima ocorrência.' }),
   })
 
   const openNew = () => {
     setEditing(null)
     reset({
-      descricao: '',
-      tipo: undefined,
-      valor_total: undefined,
-      data_competencia: '',
-      categoria_id: null,
-      centro_custo_id: null,
-      observacao: '',
+      descricao: '', tipo: undefined, valor_total: undefined, data: '',
+      status: 'a pagar', conta_id: undefined, categoria_id: null,
+      centro_custo_id: null, observacao: '',
+      tipo_recorrencia: 'unico', frequencia_recorrencia: null, total_parcelas: null,
     })
     setDialogOpen(true)
   }
@@ -219,15 +433,20 @@ export default function Lancamentos() {
   const openEdit = (l: Lancamento) => {
     setEditing(l)
     reset({
-      descricao: l.descricao,
-      tipo: l.tipo,
-      valor_total: l.valor_total,
-      data_competencia: l.data_competencia,
-      categoria_id: l.categoria_id,
-      centro_custo_id: l.centro_custo_id,
+      descricao: l.descricao, tipo: l.tipo, valor_total: l.valor_total,
+      data: l.data, status: l.status, conta_id: l.conta_id,
+      categoria_id: l.categoria_id, centro_custo_id: l.centro_custo_id,
       observacao: l.observacao ?? '',
+      tipo_recorrencia: l.tipo_recorrencia ?? 'unico',
+      frequencia_recorrencia: l.frequencia_recorrencia ?? null,
+      total_parcelas: l.total_parcelas ?? null,
     })
     setDialogOpen(true)
+  }
+
+  const handleDelete = (l: Lancamento) => {
+    if (l.tipo_recorrencia !== 'unico') setDeleteSerieDialog(l)
+    else setDeleteId(l.id)
   }
 
   const onSubmit = (d: FormData) => {
@@ -237,33 +456,21 @@ export default function Lancamentos() {
 
   const totalPages = data ? Math.ceil(data.total / data.per_page) : 1
   const isPending = createMutation.isPending || updateMutation.isPending
-
-  const statusBadge = (status: string) => {
-    const map: Record<string, 'previsto' | 'parcial' | 'realizado'> = {
-      previsto: 'previsto',
-      parcial: 'parcial',
-      realizado: 'realizado',
-    }
-    const labels: Record<string, string> = {
-      previsto: 'Previsto',
-      parcial: 'Parcial',
-      realizado: 'Realizado',
-    }
-    return <Badge variant={map[status]}>{labels[status] ?? status}</Badge>
-  }
+  const selectClass = 'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring'
 
   return (
     <div className="space-y-4">
-      {/* Filter bar */}
-      <div className="bg-card border border-border rounded-lg p-4">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
+      {/* Filtros */}
+      <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+        <div className="flex justify-center">
+          <PeriodoPicker value={periodo} onChange={handlePeriodoChange} />
+        </div>
+
+        <div className="border-t border-border pt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 items-end">
           <div>
             <Label className="text-xs mb-1 block">Tipo</Label>
-            <select
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              value={filters.tipo}
-              onChange={(e) => { setFilters(f => ({ ...f, tipo: e.target.value })); setPage(1) }}
-            >
+            <select className={selectClass} value={filters.tipo}
+              onChange={(e) => { setFilters((f) => ({ ...f, tipo: e.target.value })); setPage(1) }}>
               <option value="">Todos</option>
               <option value="entrada">Entrada</option>
               <option value="saida">Saída</option>
@@ -271,54 +478,56 @@ export default function Lancamentos() {
           </div>
           <div>
             <Label className="text-xs mb-1 block">Status</Label>
-            <select
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              value={filters.status}
-              onChange={(e) => { setFilters(f => ({ ...f, status: e.target.value })); setPage(1) }}
-            >
+            <select className={selectClass} value={filters.status}
+              onChange={(e) => { setFilters((f) => ({ ...f, status: e.target.value })); setPage(1) }}>
               <option value="">Todos</option>
-              <option value="previsto">Previsto</option>
-              <option value="parcial">Parcial</option>
-              <option value="realizado">Realizado</option>
+              <option value="pago">Pago</option>
+              <option value="a pagar">A Pagar</option>
             </select>
           </div>
           <div>
-            <Label className="text-xs mb-1 block">Data início</Label>
-            <Input
-              type="date"
-              value={filters.data_inicio}
-              onChange={(e) => { setFilters(f => ({ ...f, data_inicio: e.target.value })); setPage(1) }}
-            />
+            <Label className="text-xs mb-1 block">Recorrência</Label>
+            <select className={selectClass} value={filters.tipo_recorrencia}
+              onChange={(e) => { setFilters((f) => ({ ...f, tipo_recorrencia: e.target.value })); setPage(1) }}>
+              <option value="">Todos</option>
+              <option value="unico">Único</option>
+              <option value="fixo">Fixo</option>
+              <option value="parcelado">Parcelado</option>
+            </select>
           </div>
           <div>
-            <Label className="text-xs mb-1 block">Data fim</Label>
-            <Input
-              type="date"
-              value={filters.data_fim}
-              onChange={(e) => { setFilters(f => ({ ...f, data_fim: e.target.value })); setPage(1) }}
-            />
+            <Label className="text-xs mb-1 block">Conciliação</Label>
+            <select className={selectClass} value={filters.status_conciliacao}
+              onChange={(e) => { setFilters((f) => ({ ...f, status_conciliacao: e.target.value })); setPage(1) }}>
+              <option value="">Todos</option>
+              <option value="pendente">Pendente</option>
+              <option value="conciliado">Conciliado</option>
+              <option value="ignorado">Ignorado</option>
+            </select>
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">Conta</Label>
+            <select className={selectClass} value={filters.conta_id}
+              onChange={(e) => { setFilters((f) => ({ ...f, conta_id: e.target.value })); setPage(1) }}>
+              <option value="">Todas</option>
+              {contas?.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            </select>
           </div>
           <div>
             <Label className="text-xs mb-1 block">Categoria</Label>
-            <select
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-              value={filters.categoria_id}
-              onChange={(e) => { setFilters(f => ({ ...f, categoria_id: e.target.value })); setPage(1) }}
-            >
+            <select className={selectClass} value={filters.categoria_id}
+              onChange={(e) => { setFilters((f) => ({ ...f, categoria_id: e.target.value })); setPage(1) }}>
               <option value="">Todas</option>
-              {categorias?.map((c) => (
-                <option key={c.id} value={c.id}>{c.nome}</option>
-              ))}
+              {categorias?.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
             </select>
           </div>
           <Button onClick={openNew} className="gap-2">
-            <Plus size={16} />
-            Novo
+            <Plus size={16} /> Novo
           </Button>
         </div>
       </div>
 
-      {/* Table */}
+      {/* Tabela */}
       <div className="bg-card border border-border rounded-lg overflow-hidden">
         {isLoading ? (
           <div className="flex items-center justify-center h-48">
@@ -335,47 +544,62 @@ export default function Lancamentos() {
               <TableRow>
                 <TableHead>Data</TableHead>
                 <TableHead>Descrição</TableHead>
+                <TableHead>Conta</TableHead>
                 <TableHead>Categoria</TableHead>
                 <TableHead>Tipo</TableHead>
-                <TableHead className="text-right">Valor Total</TableHead>
-                <TableHead className="text-right">Pago</TableHead>
+                <TableHead className="text-right">Valor</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-24">Ações</TableHead>
+                <TableHead>Conciliação</TableHead>
+                <TableHead className="w-28">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {data.items.map((l) => (
                 <TableRow key={l.id}>
-                  <TableCell className="text-sm">{formatDate(l.data_competencia)}</TableCell>
-                  <TableCell className="font-medium max-w-[180px] truncate">{l.descricao}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{l.categoria_nome ?? '—'}</TableCell>
+                  <TableCell className="text-sm">{formatDate(l.data)}</TableCell>
+                  <TableCell className="max-w-[180px]">
+                    <div className="font-medium truncate">{l.descricao}</div>
+                    <RecorrenciaBadge l={l} />
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{l.conta_nome ?? '—'}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {l.categoria_icone && <span className="mr-1">{l.categoria_icone}</span>}
+                    {l.categoria_nome ?? '—'}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={l.tipo === 'entrada' ? 'entrada' : 'saida'}>
                       {l.tipo === 'entrada' ? 'Entrada' : 'Saída'}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right font-medium">{formatCurrency(l.valor_total)}</TableCell>
-                  <TableCell className="text-right text-sm text-muted-foreground">{formatCurrency(l.valor_pago)}</TableCell>
-                  <TableCell>{statusBadge(l.status)}</TableCell>
+                  <TableCell>
+                    <Badge variant={l.status === 'pago' ? 'pago' : 'a_pagar'}>
+                      {l.status === 'pago' ? 'Pago' : 'A Pagar'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {l.status_conciliacao ? (
+                      <Badge variant={CONCILIACAO_VARIANT[l.status_conciliacao]}>
+                        {CONCILIACAO_LABEL[l.status_conciliacao]}
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        title="Gerenciar vínculos"
-                        onClick={() => setVinculosLancamento(l)}
-                      >
-                        <Link2 size={14} />
-                      </Button>
+                      {l.tipo_recorrencia === 'fixo' && (
+                        <Button variant="ghost" size="icon" title="Gerar próxima ocorrência"
+                          disabled={gerarProximoMutation.isPending}
+                          onClick={() => gerarProximoMutation.mutate(l.id)}>
+                          <RotateCw size={14} />
+                        </Button>
+                      )}
                       <Button variant="ghost" size="icon" onClick={() => openEdit(l)}>
                         <Pencil size={14} />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="hover:text-destructive"
-                        onClick={() => setDeleteId(l.id)}
-                      >
+                      <Button variant="ghost" size="icon" className="hover:text-destructive"
+                        onClick={() => handleDelete(l)}>
                         <Trash2 size={14} />
                       </Button>
                     </div>
@@ -386,27 +610,16 @@ export default function Lancamentos() {
           </Table>
         )}
 
-        {/* Pagination */}
         {data && data.total > data.per_page && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-border">
             <p className="text-sm text-muted-foreground">
               {data.total} registro(s) — página {data.page} de {totalPages}
             </p>
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage(p => p - 1)}
-              >
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
                 <ChevronLeft size={16} />
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages}
-                onClick={() => setPage(p => p + 1)}
-              >
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
                 <ChevronRight size={16} />
               </Button>
             </div>
@@ -414,7 +627,7 @@ export default function Lancamentos() {
         )}
       </div>
 
-      {/* Form Dialog */}
+      {/* Dialog de formulário */}
       <Dialog open={dialogOpen} onOpenChange={(o) => { if (!o) { setDialogOpen(false); setEditing(null) } }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -430,61 +643,109 @@ export default function Lancamentos() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Tipo *</Label>
-                <select
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  {...register('tipo')}
-                >
+                <select className={selectClass} {...register('tipo')}>
                   <option value="">Selecione</option>
                   <option value="entrada">Entrada</option>
                   <option value="saida">Saída</option>
                 </select>
                 {errors.tipo && <p className="text-xs text-destructive">{errors.tipo.message}</p>}
               </div>
-
               <div className="space-y-2">
-                <Label>Valor Total *</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0,00"
-                  {...register('valor_total')}
-                />
+                <Label>Valor *</Label>
+                <Input type="number" step="0.01" min="0" placeholder="0,00" {...register('valor_total')} />
                 {errors.valor_total && <p className="text-xs text-destructive">{errors.valor_total.message}</p>}
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Data *</Label>
+                <Input type="date" {...register('data')} />
+                {errors.data && <p className="text-xs text-destructive">{errors.data.message}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label>Status *</Label>
+                <select className={selectClass} {...register('status')}>
+                  <option value="a pagar">A Pagar</option>
+                  <option value="pago">Pago</option>
+                </select>
+              </div>
+            </div>
+
             <div className="space-y-2">
-              <Label>Data de Competência *</Label>
-              <Input type="date" {...register('data_competencia')} />
-              {errors.data_competencia && <p className="text-xs text-destructive">{errors.data_competencia.message}</p>}
+              <Label>Conta *</Label>
+              <select className={selectClass} {...register('conta_id')}>
+                <option value="">Selecione a conta</option>
+                {contas?.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+              </select>
+              {errors.conta_id && <p className="text-xs text-destructive">{errors.conta_id.message}</p>}
+            </div>
+
+            {/* Recorrência */}
+            <div className="border-t border-border pt-4 space-y-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Recorrência
+              </p>
+
+              <div className="space-y-2">
+                <Label>Tipo de Recorrência</Label>
+                <select className={selectClass} {...register('tipo_recorrencia')}>
+                  <option value="unico">Único (sem recorrência)</option>
+                  <option value="fixo">Fixo (repete indefinidamente)</option>
+                  <option value="parcelado">Parcelado</option>
+                </select>
+              </div>
+
+              {(tipoRecorrencia === 'fixo' || tipoRecorrencia === 'parcelado') && (
+                <div className="space-y-2">
+                  <Label>Frequência *</Label>
+                  <select className={selectClass} {...register('frequencia_recorrencia')}>
+                    <option value="">Selecione</option>
+                    {FREQUENCIAS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                  </select>
+                  {errors.frequencia_recorrencia && (
+                    <p className="text-xs text-destructive">{errors.frequencia_recorrencia.message}</p>
+                  )}
+                </div>
+              )}
+
+              {tipoRecorrencia === 'parcelado' && !editing && (
+                <div className="space-y-2">
+                  <Label>Número de Parcelas *</Label>
+                  <Input type="number" min="2" placeholder="Ex: 12" {...register('total_parcelas')} />
+                  {errors.total_parcelas && (
+                    <p className="text-xs text-destructive">{errors.total_parcelas.message}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Serão criadas N parcelas com valor dividido igualmente.
+                  </p>
+                </div>
+              )}
+
+              {tipoRecorrencia === 'parcelado' && editing && (
+                <p className="text-xs text-muted-foreground">
+                  Esta é a parcela {editing.numero_parcela}/{editing.total_parcelas}. O número total de parcelas não pode ser alterado.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
               <Label>Categoria</Label>
-              <select
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                {...register('categoria_id')}
-                onChange={(e) => setValue('categoria_id', e.target.value ? Number(e.target.value) : null)}
-              >
+              <select className={selectClass} {...register('categoria_id')}
+                onChange={(e) => setValue('categoria_id', e.target.value ? Number(e.target.value) : null)}>
                 <option value="">Nenhuma</option>
                 {categorias?.map((c) => (
-                  <option key={c.id} value={c.id}>{c.nome}</option>
+                  <option key={c.id} value={c.id}>{c.icone ? `${c.icone} ` : ''}{c.nome}</option>
                 ))}
               </select>
             </div>
 
             <div className="space-y-2">
               <Label>Centro de Custo</Label>
-              <select
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                {...register('centro_custo_id')}
-                onChange={(e) => setValue('centro_custo_id', e.target.value ? Number(e.target.value) : null)}
-              >
+              <select className={selectClass} {...register('centro_custo_id')}
+                onChange={(e) => setValue('centro_custo_id', e.target.value ? Number(e.target.value) : null)}>
                 <option value="">Nenhum</option>
-                {centros?.map((c) => (
-                  <option key={c.id} value={c.id}>{c.nome}</option>
-                ))}
+                {centros?.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
               </select>
             </div>
 
@@ -494,11 +755,8 @@ export default function Lancamentos() {
             </div>
 
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => { setDialogOpen(false); setEditing(null) }}
-              >
+              <Button type="button" variant="outline"
+                onClick={() => { setDialogOpen(false); setEditing(null) }}>
                 Cancelar
               </Button>
               <Button type="submit" disabled={isPending}>
@@ -510,159 +768,42 @@ export default function Lancamentos() {
         </DialogContent>
       </Dialog>
 
-      {/* Dialog de Vínculos */}
-      <Dialog open={!!vinculosLancamento} onOpenChange={(o) => { if (!o) fecharVinculos() }}>
-        <DialogContent className="max-w-2xl">
+      {/* Dialog excluir série */}
+      <Dialog open={!!deleteSerieDialog} onOpenChange={(o) => { if (!o) setDeleteSerieDialog(null) }}>
+        <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Vínculos — {vinculosLancamento?.descricao}</DialogTitle>
-            {vinculosLancamento && (
-              <div className="flex items-center gap-3 pt-1 text-sm text-muted-foreground">
-                <span>Total: <strong className="text-foreground">{formatCurrency(vinculosLancamento.valor_total)}</strong></span>
-                <span>Pago: <strong className="text-foreground">{formatCurrency(vinculosLancamento.valor_pago)}</strong></span>
-                <span>Status: {statusBadge(vinculosLancamento.status)}</span>
-              </div>
-            )}
+            <DialogTitle>Excluir lançamento</DialogTitle>
           </DialogHeader>
-
-          {!adicionandoVinculo ? (
-            <div className="space-y-4">
-              {loadingVinculos ? (
-                <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-primary" /></div>
-              ) : !vinculos?.length ? (
-                <p className="text-sm text-muted-foreground text-center py-6">
-                  Nenhuma transação vinculada. Clique em "Adicionar Vínculo" para registrar um pagamento.
-                </p>
-              ) : (
-                <div className="border border-border rounded-lg overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Transação</TableHead>
-                        <TableHead>Conta</TableHead>
-                        <TableHead>Data</TableHead>
-                        <TableHead className="text-right">Valor Vinculado</TableHead>
-                        <TableHead className="w-10"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {vinculos.map((v) => (
-                        <TableRow key={v.id}>
-                          <TableCell className="font-medium">{v.transacao_descricao ?? '—'}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{v.transacao_conta ?? '—'}</TableCell>
-                          <TableCell className="text-sm">{v.transacao_data ? formatDate(v.transacao_data) : '—'}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(v.valor_vinculado)}</TableCell>
-                          <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="hover:text-destructive"
-                              title="Remover vínculo"
-                              disabled={desvinculaMutation.isPending}
-                              onClick={() => desvinculaMutation.mutate(v.id)}
-                            >
-                              <Unlink size={14} />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-              <DialogFooter>
-                <Button variant="outline" onClick={fecharVinculos}>Fechar</Button>
-                <Button onClick={() => { setAdicionandoVinculo(true); setTransacaoSelecionada(null) }}>
-                  <Link2 size={14} />
-                  Adicionar Vínculo
-                </Button>
-              </DialogFooter>
-            </div>
-          ) : (
-            <div className="space-y-4">
+          {deleteSerieDialog && (
+            <div className="space-y-3 py-1">
               <p className="text-sm text-muted-foreground">
-                Selecione uma transação pendente do mesmo tipo para vincular a este lançamento.
+                <strong className="text-foreground">{deleteSerieDialog.descricao}</strong> faz parte de uma série{' '}
+                {deleteSerieDialog.tipo_recorrencia === 'parcelado'
+                  ? `(Parcela ${deleteSerieDialog.numero_parcela}/${deleteSerieDialog.total_parcelas})`
+                  : '(Fixo)'}.
               </p>
-              {loadingTransacoes ? (
-                <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-primary" /></div>
-              ) : !transacoesDisponiveis?.length ? (
-                <p className="text-sm text-muted-foreground text-center py-6">
-                  Nenhuma transação pendente compatível encontrada.
-                </p>
-              ) : (
-                <div className="border border-border rounded-lg overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-8"></TableHead>
-                        <TableHead>Descrição</TableHead>
-                        <TableHead>Conta</TableHead>
-                        <TableHead>Data</TableHead>
-                        <TableHead className="text-right">Valor</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {transacoesDisponiveis.map((t) => (
-                        <TableRow
-                          key={t.id}
-                          className={`cursor-pointer ${transacaoSelecionada?.id === t.id ? 'bg-primary/10' : 'hover:bg-muted/50'}`}
-                          onClick={() => setTransacaoSelecionada(t)}
-                        >
-                          <TableCell>
-                            <input type="radio" readOnly checked={transacaoSelecionada?.id === t.id} className="accent-primary" />
-                          </TableCell>
-                          <TableCell className="font-medium">{t.descricao}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{t.conta_nome ?? '—'}</TableCell>
-                          <TableCell className="text-sm">{formatDate(t.data_pagamento)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(t.valor)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-              {transacaoSelecionada && (() => {
-                const restante = (vinculosLancamento?.valor_total ?? 0) - (vinculosLancamento?.valor_pago ?? 0)
-                const bate = Math.abs(transacaoSelecionada.valor - restante) < 0.005
-                return (
-                  <div className={`rounded-md border px-4 py-3 text-sm space-y-1 ${bate ? 'border-border bg-muted/40' : 'border-destructive/50 bg-destructive/5'}`}>
-                    <div className="flex justify-between">
-                      <span>Valor da transação:</span>
-                      <strong>{formatCurrency(transacaoSelecionada.valor)}</strong>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Saldo restante do lançamento:</span>
-                      <strong>{formatCurrency(restante)}</strong>
-                    </div>
-                    {!bate && (
-                      <p className="text-destructive text-xs pt-1">
-                        Os valores não batem. O vínculo só pode ser feito quando a transação cobre exatamente o saldo restante do lançamento.
-                      </p>
-                    )}
-                  </div>
-                )
-              })()}
-              <DialogFooter>
-                <Button variant="outline" onClick={() => { setAdicionandoVinculo(false); setTransacaoSelecionada(null) }}>
-                  Voltar
-                </Button>
-                <Button
-                  disabled={
-                    !transacaoSelecionada ||
-                    Math.abs(transacaoSelecionada.valor - ((vinculosLancamento?.valor_total ?? 0) - (vinculosLancamento?.valor_pago ?? 0))) >= 0.005 ||
-                    vincularMutation.isPending
-                  }
-                  onClick={() => vincularMutation.mutate()}
-                >
-                  {vincularMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Confirmar Vínculo
-                </Button>
-              </DialogFooter>
+              <p className="text-sm text-muted-foreground">O que deseja excluir?</p>
             </div>
           )}
+          <DialogFooter className="flex-col sm:flex-col gap-2">
+            <Button variant="outline" className="w-full"
+              onClick={() => { deleteSerieDialog && setDeleteId(deleteSerieDialog.id); setDeleteSerieDialog(null) }}>
+              Apenas este lançamento
+            </Button>
+            <Button variant="destructive" className="w-full"
+              disabled={deleteSerieMutation.isPending}
+              onClick={() => deleteSerieDialog && deleteSerieMutation.mutate(deleteSerieDialog.id)}>
+              {deleteSerieMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+              Excluir toda a série
+            </Button>
+            <Button variant="ghost" className="w-full" onClick={() => setDeleteSerieDialog(null)}>
+              Cancelar
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Confirm delete */}
+      {/* Confirm excluir único */}
       <ConfirmDialog
         open={deleteId !== null}
         description="Tem certeza que deseja excluir este lançamento? Esta ação não pode ser desfeita."
