@@ -33,7 +33,6 @@ import { FluxoCaixa } from './relatorios/components/fluxo-caixa'
 import { PorCategoria } from './relatorios/components/por-categoria'
 import { PorCentroCusto } from './relatorios/components/por-centro-custo'
 import { PrevistoRealizado } from './relatorios/components/previsto-realizado'
-import { ExtratoConta } from './relatorios/components/extrato-conta'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
