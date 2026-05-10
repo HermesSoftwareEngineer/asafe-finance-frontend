@@ -25,6 +25,16 @@ import { formatCurrency } from '../lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import type { DashboardData } from '../types'
 
+import { useState, useMemo } from 'react'
+import { PeriodoPicker, computeDates, PERIODO_DEFAULT } from '../lib/periodo'
+import type { Periodo } from '../lib/periodo'
+
+import { FluxoCaixa } from './relatorios/components/fluxo-caixa'
+import { PorCategoria } from './relatorios/components/por-categoria'
+import { PorCentroCusto } from './relatorios/components/por-centro-custo'
+import { PrevistoRealizado } from './relatorios/components/previsto-realizado'
+import { ExtratoConta } from './relatorios/components/extrato-conta'
+
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
 interface SummaryCardProps {
@@ -54,6 +64,9 @@ function SummaryCard({ title, value, icon, color, bg }: SummaryCardProps) {
 }
 
 export default function Dashboard() {
+  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_DEFAULT)
+  const { inicio: dataInicio, fim: dataFim } = computeDates(periodo)
+
   const { data, isLoading, error } = useQuery<DashboardData>({
     queryKey: ['dashboard'],
     queryFn: async () => {
@@ -78,26 +91,75 @@ export default function Dashboard() {
     )
   }
 
+  const fullChartData = useMemo(() => {
+    if (!data) return { labels: [], entradas: [], saidas: [] }
+
+    let month = new Date().getMonth()
+    let year = new Date().getFullYear()
+    let isIso = false
+
+    if (data.chart_labels.length > 0) {
+      const firstLabel = data.chart_labels[0]
+      if (firstLabel.includes('-')) {
+        isIso = true
+        const [y, m] = firstLabel.split('-')
+        year = Number(y)
+        month = Number(m) - 1
+      } else if (firstLabel.includes('/')) {
+        const [, m] = firstLabel.split('/')
+        month = Number(m) - 1
+      }
+    }
+
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+
+    const mapEntradas = new Map<string, number>()
+    const mapSaidas = new Map<string, number>()
+
+    data.chart_labels.forEach((label, i) => {
+      mapEntradas.set(label, data.chart_entradas[i])
+      mapSaidas.set(label, data.chart_saidas[i])
+    })
+
+    const labels = []
+    const entradas = []
+    const saidas = []
+
+    for (let i = 1; i <= daysInMonth; i++) {
+      const dayStr = String(i).padStart(2, '0')
+      const monthStr = String(month + 1).padStart(2, '0')
+      
+      const label = isIso ? `${year}-${monthStr}-${dayStr}` : `${dayStr}/${monthStr}`
+      labels.push(label)
+      entradas.push(mapEntradas.get(label) || 0)
+      saidas.push(mapSaidas.get(label) || 0)
+    }
+
+    return { labels, entradas, saidas }
+  }, [data])
+
   const chartData = {
-    labels: data.chart_labels,
+    labels: fullChartData.labels,
     datasets: [
       {
         label: 'Entradas',
-        data: data.chart_entradas,
+        data: fullChartData.entradas,
         borderColor: '#16a34a',
         backgroundColor: 'rgba(22, 163, 74, 0.08)',
         fill: true,
         tension: 0.3,
-        pointRadius: 3,
+        pointRadius: 0,
+        pointHoverRadius: 4,
       },
       {
         label: 'Saídas',
-        data: data.chart_saidas,
+        data: fullChartData.saidas,
         borderColor: '#dc2626',
         backgroundColor: 'rgba(220, 38, 38, 0.08)',
         fill: true,
         tension: 0.3,
-        pointRadius: 3,
+        pointRadius: 0,
+        pointHoverRadius: 4,
       },
     ],
   }
@@ -193,7 +255,7 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="h-64">
-              {data.chart_labels.length > 0 ? (
+              {fullChartData.labels.length > 0 ? (
                 <Line data={chartData} options={chartOptions} />
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -236,6 +298,20 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
+      </div>
+
+      {/* Relatórios Detalhados */}
+      <div className="space-y-6 pt-6 border-t border-border">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <h2 className="text-xl font-bold">Relatórios Detalhados</h2>
+          <PeriodoPicker value={periodo} onChange={setPeriodo} />
+        </div>
+        
+        <FluxoCaixa dataInicio={dataInicio} dataFim={dataFim} enabled={true} />
+        <PorCategoria dataInicio={dataInicio} dataFim={dataFim} enabled={true} />
+        <PorCentroCusto dataInicio={dataInicio} dataFim={dataFim} enabled={true} />
+        <PrevistoRealizado dataInicio={dataInicio} dataFim={dataFim} enabled={true} />
+        {/* Extrato requires a contaId, so we might skip it or add a selector later. Leaving it out of the main dashboard is common unless there's a global account selected. */}
       </div>
     </div>
   )

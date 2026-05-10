@@ -133,7 +133,7 @@ export const conciliacaoApi = {
 
 // ─── Relatórios ───────────────────────────────────────────────────────────────
 export const relatoriosApi = {
-  fluxoCaixa: async (params: { data_inicio?: string; data_fim?: string; conta_id?: number }) => {
+  fluxoCaixa: async (params: { data_inicio?: string; data_fim?: string; conta_id?: number; granularidade?: string }) => {
     const resp = await api.get('/relatorios/fluxo-caixa', { params })
     // The API returns an object with an "items" array
     return resp.data.items.map((item: any) => ({
