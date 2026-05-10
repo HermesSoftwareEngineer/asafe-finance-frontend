@@ -74,22 +74,6 @@ export default function Dashboard() {
     },
   })
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    )
-  }
-
-  if (error || !data) {
-    return (
-      <div className="rounded-lg bg-red-50 border border-red-200 p-6 text-center text-red-700">
-        Erro ao carregar o dashboard. Tente novamente.
-      </div>
-    )
-  }
-
   const fullChartData = useMemo(() => {
     if (!data) return { labels: [], entradas: [], saidas: [] }
 
@@ -136,6 +120,22 @@ export default function Dashboard() {
 
     return { labels, entradas, saidas }
   }, [data])
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    )
+  }
+
+  if (error || !data) {
+    return (
+      <div className="rounded-lg bg-red-50 border border-red-200 p-6 text-center text-red-700">
+        Erro ao carregar o dashboard. Tente novamente.
+      </div>
+    )
+  }
 
   const chartData = {
     labels: fullChartData.labels,
