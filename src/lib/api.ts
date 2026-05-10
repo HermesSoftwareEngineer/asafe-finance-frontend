@@ -94,9 +94,12 @@ export const lancamentosApi = {
       observacao?: string | null
       tipo_recorrencia?: string
       frequencia_recorrencia?: string | null
-    }
-  ) => api.put<Lancamento>(`/lancamentos/${id}`, data),
-  delete: (id: number) => api.delete(`/lancamentos/${id}`),
+      total_parcelas?: number | null
+    },
+    scope?: 'only' | 'all' | 'future'
+  ) => api.put<Lancamento>(`/lancamentos/${id}`, data, { params: { scope } }),
+  delete: (id: number, scope?: 'only' | 'all' | 'future') =>
+    api.delete(`/lancamentos/${id}`, { params: { scope } }),
   getSerie: (id: number) =>
     api.get<{ total: number; lancamentos: Lancamento[] }>(`/lancamentos/${id}/serie`),
   deleteSerie: (id: number) =>
@@ -130,17 +133,61 @@ export const conciliacaoApi = {
 
 // ─── Relatórios ───────────────────────────────────────────────────────────────
 export const relatoriosApi = {
-  fluxoCaixa: (params: { data_inicio?: string; data_fim?: string; conta_id?: number }) =>
-    api.get('/relatorios/fluxo-caixa', { params }),
-  porCategoria: (params: { data_inicio?: string; data_fim?: string }) =>
-    api.get('/relatorios/por-categoria', { params }),
-  porCentroCusto: (params: { data_inicio?: string; data_fim?: string }) =>
-    api.get('/relatorios/por-centro-custo', { params }),
-  previstoRealizado: (params: { data_inicio?: string; data_fim?: string }) =>
-    api.get('/relatorios/previsto-realizado', { params }),
-  extratoConta: (params: { conta_id: number; data_inicio?: string; data_fim?: string }) =>
-    api.get('/relatorios/extrato-conta', { params }),
+  fluxoCaixa: async (params: { data_inicio?: string; data_fim?: string; conta_id?: number }) => {
+    const resp = await api.get('/relatorios/fluxo-caixa', { params })
+    // The API returns an object with an "items" array
+    return resp.data.items.map((item: any) => ({
+      periodo: item.periodo,
+      entradas: item.entradas,
+      saidas: item.saidas,
+      saldo: item.saldo,
+      saldo_acumulado: item.saldo_acumulado,
+    }))
+  },
+  porCategoria: async (params: { data_inicio?: string; data_fim?: string; categoria_ids?: number[]; granularidade?: string }) => {
+    const resp = await api.get('/relatorios/por-categoria', { params })
+    // Map each category to the shape expected by the UI
+    return resp.data.categorias.map((cat: any) => ({
+      categoria: { id: cat.categoria_id, nome: cat.categoria_nome },
+      subcategorias: cat.subcategorias.map((sub: any) => ({
+        categoria: { id: sub.categoria_id, nome: sub.categoria_nome },
+        total: sub.total,
+      })),
+      total: cat.total,
+    }))
+  },
+  porCentroCusto: async (params: { data_inicio?: string; data_fim?: string }) => {
+    const resp = await api.get('/relatorios/por-centro-custo', { params })
+    return resp.data.items.map((item: any) => ({
+      centro: { id: item.centro_id, nome: item.centro_nome },
+      entradas: item.entradas,
+      saidas: item.saidas,
+      saldo: item.saldo,
+    }))
+  },
+  previstoRealizado: async (params: { data_inicio?: string; data_fim?: string }) => {
+    const resp = await api.get('/relatorios/previsto-realizado', { params })
+    return resp.data.items.map((item: any) => ({
+      categoria: { id: item.categoria_id, nome: item.categoria_nome },
+      previsto: item.previsto,
+      realizado: item.realizado,
+      diferenca: item.diferenca,
+      percentual: item.percentual,
+    }))
+  },
+  extratoConta: async (params: { conta_id: number; data_inicio?: string; data_fim?: string }) => {
+    const resp = await api.get('/relatorios/extrato-conta', { params })
+    return resp.data.items.map((item: any) => ({
+      data: item.data,
+      descricao: item.descricao,
+      categoria_nome: item.categoria_nome ?? null,
+      valor_total: item.valor_total,
+      tipo: item.tipo,
+      saldo: item.saldo_corrente,
+    }))
+  },
 }
+// Legacy relatoriosApi definitions removed (replaced by async implementations above)
 
 // ─── Contas ───────────────────────────────────────────────────────────────────
 export const contasApi = {

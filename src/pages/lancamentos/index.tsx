@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -10,9 +10,10 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   RotateCw,
 } from 'lucide-react'
+import { PeriodoPicker, computeDates, PERIODO_DEFAULT } from '../../lib/periodo'
+import type { Periodo } from '../../lib/periodo'
 import { lancamentosApi, categoriasApi, centrosCustoApi, contasApi } from '../../lib/api'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { toast } from '../../hooks/useToast'
@@ -39,175 +40,7 @@ import {
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import type { Lancamento, Categoria, CentroCusto, Conta } from '../../types'
 
-// ─── Período ──────────────────────────────────────────────────────────────────
-
-type PeriodoModo = 'mes' | 'semana' | 'dia' | 'trimestre' | 'personalizado'
-
-interface Periodo {
-  modo: PeriodoModo
-  offset: number
-  customInicio: string
-  customFim: string
-}
-
-const MESES = [
-  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
-]
-
-function toISO(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-function computeDates(p: Periodo): { inicio: string; fim: string } {
-  if (p.modo === 'personalizado') return { inicio: p.customInicio, fim: p.customFim }
-  const hoje = new Date()
-  hoje.setHours(0, 0, 0, 0)
-  if (p.modo === 'dia') {
-    const d = new Date(hoje)
-    d.setDate(d.getDate() + p.offset)
-    const s = toISO(d)
-    return { inicio: s, fim: s }
-  }
-  if (p.modo === 'semana') {
-    const d = new Date(hoje)
-    const dow = d.getDay()
-    d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow) + p.offset * 7)
-    const fim = new Date(d)
-    fim.setDate(fim.getDate() + 6)
-    return { inicio: toISO(d), fim: toISO(fim) }
-  }
-  if (p.modo === 'mes') {
-    const start = new Date(hoje.getFullYear(), hoje.getMonth() + p.offset, 1)
-    const end = new Date(start.getFullYear(), start.getMonth() + 1, 0)
-    return { inicio: toISO(start), fim: toISO(end) }
-  }
-  if (p.modo === 'trimestre') {
-    const q = Math.floor(hoje.getMonth() / 3)
-    const qBase = hoje.getFullYear() * 4 + q + p.offset
-    const targetY = Math.floor(qBase / 4)
-    const targetQ = ((qBase % 4) + 4) % 4
-    const start = new Date(targetY, targetQ * 3, 1)
-    const end = new Date(targetY, targetQ * 3 + 3, 0)
-    return { inicio: toISO(start), fim: toISO(end) }
-  }
-  return { inicio: '', fim: '' }
-}
-
-function getPeriodoLabel(p: Periodo): string {
-  if (p.modo === 'personalizado') {
-    if (p.customInicio && p.customFim)
-      return `${formatDate(p.customInicio)} – ${formatDate(p.customFim)}`
-    return 'Período Personalizado'
-  }
-  const hoje = new Date()
-  if (p.modo === 'dia') {
-    if (p.offset === 0) return 'Hoje'
-    if (p.offset === -1) return 'Ontem'
-    return `Dia ${formatDate(computeDates(p).inicio)}`
-  }
-  if (p.modo === 'semana') {
-    if (p.offset === 0) return 'Esta semana'
-    const { inicio, fim } = computeDates(p)
-    return `Semana ${formatDate(inicio)} – ${formatDate(fim)}`
-  }
-  if (p.modo === 'mes') {
-    if (p.offset === 0) return 'Este mês'
-    const d = new Date(hoje.getFullYear(), hoje.getMonth() + p.offset, 1)
-    return `Mês de ${MESES[d.getMonth()]} ${d.getFullYear()}`
-  }
-  if (p.modo === 'trimestre') {
-    if (p.offset === 0) return 'Este trimestre'
-    const q = Math.floor(hoje.getMonth() / 3)
-    const qBase = hoje.getFullYear() * 4 + q + p.offset
-    const targetY = Math.floor(qBase / 4)
-    const targetQ = ((qBase % 4) + 4) % 4
-    return `T${targetQ + 1} ${targetY}`
-  }
-  return ''
-}
-
-const PERIODO_OPCOES: { modo: PeriodoModo; label: string }[] = [
-  { modo: 'mes', label: 'Este mês' },
-  { modo: 'semana', label: 'Esta semana' },
-  { modo: 'dia', label: 'Hoje' },
-  { modo: 'trimestre', label: 'Este trimestre' },
-  { modo: 'personalizado', label: 'Período Personalizado' },
-]
-
-function PeriodoPicker({ value, onChange }: { value: Periodo; onChange: (v: Periodo) => void }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  const isCustom = value.modo === 'personalizado'
-
-  return (
-    <div className="flex flex-col items-center gap-3">
-      <div className="flex items-center gap-2">
-        {!isCustom && (
-          <Button variant="outline" size="icon" className="h-9 w-9"
-            onClick={() => onChange({ ...value, offset: value.offset - 1 })}>
-            <ChevronLeft size={16} />
-          </Button>
-        )}
-        <div ref={ref} className="relative">
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            className="flex items-center gap-2 px-5 py-2 border border-border rounded-md bg-card hover:bg-muted/50 font-medium text-sm min-w-[220px] justify-center transition-colors"
-          >
-            <span>{getPeriodoLabel(value)}</span>
-            <ChevronDown size={14} className="text-muted-foreground" />
-          </button>
-          {open && (
-            <div className="absolute top-full mt-1 left-1/2 -translate-x-1/2 z-50 bg-card border border-border rounded-md shadow-md overflow-hidden min-w-[200px]">
-              {PERIODO_OPCOES.map((opt) => (
-                <button key={opt.modo} type="button"
-                  onClick={() => { onChange({ ...value, modo: opt.modo, offset: 0 }); setOpen(false) }}
-                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors hover:bg-muted/50 ${value.modo === opt.modo ? 'text-primary font-semibold bg-primary/5' : ''}`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-        {!isCustom && (
-          <Button variant="outline" size="icon" className="h-9 w-9"
-            onClick={() => onChange({ ...value, offset: value.offset + 1 })}>
-            <ChevronRight size={16} />
-          </Button>
-        )}
-      </div>
-      {isCustom && (
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5">
-            <Label className="text-xs text-muted-foreground whitespace-nowrap">De</Label>
-            <Input type="date" className="w-36 h-8 text-sm" value={value.customInicio}
-              onChange={(e) => onChange({ ...value, customInicio: e.target.value })} />
-          </div>
-          <span className="text-muted-foreground text-sm">–</span>
-          <div className="flex items-center gap-1.5">
-            <Label className="text-xs text-muted-foreground whitespace-nowrap">Até</Label>
-            <Input type="date" className="w-36 h-8 text-sm" value={value.customFim}
-              onChange={(e) => onChange({ ...value, customFim: e.target.value })} />
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
+// ─── Período (imported from shared lib/periodo.tsx) ───────────────────────────
 
 // ─── Constantes de recorrência ────────────────────────────────────────────────
 
@@ -250,6 +83,8 @@ const schema = z
 
 type FormData = z.infer<typeof schema>
 
+type Scope = 'only' | 'all' | 'future'
+
 interface Filters {
   tipo: string
   status: string
@@ -289,12 +124,13 @@ function RecorrenciaBadge({ l }: { l: Lancamento }) {
 export default function Lancamentos() {
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
-  const [periodo, setPeriodo] = useState<Periodo>({ modo: 'mes', offset: 0, customInicio: '', customFim: '' })
+  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_DEFAULT)
   const [filters, setFilters] = useState<Filters>({
     tipo: '', status: '', tipo_recorrencia: '', status_conciliacao: '', categoria_id: '', conta_id: '',
   })
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Lancamento | null>(null)
+  const [editScope, setEditScope] = useState<Scope>('only')
 
   // delete states
   const [deleteId, setDeleteId] = useState<number | null>(null)
@@ -375,39 +211,30 @@ export default function Lancamentos() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: (d: FormData) =>
+    mutationFn: (payload: FormData & { scope?: Scope }) =>
       lancamentosApi.update(editing!.id, {
-        descricao: d.descricao, tipo: d.tipo, valor_total: d.valor_total,
-        data: d.data, status: d.status, conta_id: d.conta_id,
-        categoria_id: d.categoria_id ?? null, centro_custo_id: d.centro_custo_id ?? null,
-        observacao: d.observacao || null,
-        tipo_recorrencia: d.tipo_recorrencia,
-        frequencia_recorrencia: d.tipo_recorrencia !== 'unico' ? (d.frequencia_recorrencia ?? null) : null,
-      }),
+        descricao: payload.descricao, tipo: payload.tipo, valor_total: payload.valor_total,
+        data: payload.data, status: payload.status, conta_id: payload.conta_id,
+        categoria_id: payload.categoria_id ?? null, centro_custo_id: payload.centro_custo_id ?? null,
+        observacao: payload.observacao || null,
+        tipo_recorrencia: payload.tipo_recorrencia,
+        frequencia_recorrencia: payload.tipo_recorrencia !== 'unico' ? (payload.frequencia_recorrencia ?? null) : null,
+        total_parcelas: payload.tipo_recorrencia === 'parcelado' ? (payload.total_parcelas ?? null) : null,
+      }, payload.scope),
     onSuccess: () => {
       toast({ variant: 'success', title: 'Lançamento atualizado!' })
-      setDialogOpen(false); setEditing(null); reset(); invalidate()
+      setDialogOpen(false); setEditing(null); reset(); setEditScope('only'); invalidate()
     },
     onError: () => toast({ variant: 'destructive', title: 'Erro ao atualizar lançamento.' }),
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => lancamentosApi.delete(id),
+    mutationFn: ({ id, scope }: { id: number; scope?: Scope }) => lancamentosApi.delete(id, scope),
     onSuccess: () => {
       toast({ variant: 'success', title: 'Lançamento excluído!' })
-      setDeleteId(null); invalidate()
+      setDeleteId(null); setDeleteSerieDialog(null); invalidate()
     },
     onError: () => toast({ variant: 'destructive', title: 'Erro ao excluir lançamento.' }),
-  })
-
-  const deleteSerieMutation = useMutation({
-    mutationFn: (id: number) => lancamentosApi.deleteSerie(id),
-    onSuccess: (res) => {
-      const n = (res.data as { total_excluidos?: number }).total_excluidos ?? 0
-      toast({ variant: 'success', title: `Série excluída — ${n} lançamento(s) removido(s).` })
-      setDeleteSerieDialog(null); invalidate()
-    },
-    onError: () => toast({ variant: 'destructive', title: 'Erro ao excluir série.' }),
   })
 
   const gerarProximoMutation = useMutation({
@@ -441,6 +268,7 @@ export default function Lancamentos() {
       frequencia_recorrencia: l.frequencia_recorrencia ?? null,
       total_parcelas: l.total_parcelas ?? null,
     })
+    setEditScope('only')
     setDialogOpen(true)
   }
 
@@ -450,8 +278,10 @@ export default function Lancamentos() {
   }
 
   const onSubmit = (d: FormData) => {
-    if (editing) updateMutation.mutate(d)
-    else createMutation.mutate(d)
+    if (editing) {
+      const scope = editing.tipo_recorrencia === 'unico' ? 'only' : editScope
+      updateMutation.mutate({ ...d, scope })
+    } else createMutation.mutate(d)
   }
 
   const totalPages = data ? Math.ceil(data.total / data.per_page) : 1
@@ -727,6 +557,18 @@ export default function Lancamentos() {
                   Esta é a parcela {editing.numero_parcela}/{editing.total_parcelas}. O número total de parcelas não pode ser alterado.
                 </p>
               )}
+
+              {editing && editing.tipo_recorrencia !== 'unico' && (
+                <div className="space-y-2">
+                  <Label>Escopo de alteração</Label>
+                  <select className={selectClass} value={editScope}
+                    onChange={(e) => setEditScope(e.target.value as Scope)}>
+                    <option value="only">Apenas este lançamento</option>
+                    <option value="all">Todos os lançamentos da sequência</option>
+                    <option value="future">Este e os futuros lançamentos da sequência</option>
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -787,14 +629,29 @@ export default function Lancamentos() {
           )}
           <DialogFooter className="flex-col sm:flex-col gap-2">
             <Button variant="outline" className="w-full"
-              onClick={() => { deleteSerieDialog && setDeleteId(deleteSerieDialog.id); setDeleteSerieDialog(null) }}>
+              onClick={() => {
+                if (deleteSerieDialog) {
+                  deleteMutation.mutate({ id: deleteSerieDialog.id, scope: 'only' })
+                }
+                setDeleteSerieDialog(null)
+              }}>
               Apenas este lançamento
             </Button>
+            <Button variant="secondary" className="w-full"
+              onClick={() => {
+                if (deleteSerieDialog) deleteMutation.mutate({ id: deleteSerieDialog.id, scope: 'future' })
+              }}
+              disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+              Este e os futuros lançamentos
+            </Button>
             <Button variant="destructive" className="w-full"
-              disabled={deleteSerieMutation.isPending}
-              onClick={() => deleteSerieDialog && deleteSerieMutation.mutate(deleteSerieDialog.id)}>
-              {deleteSerieMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-              Excluir toda a série
+              disabled={deleteMutation.isPending}
+              onClick={() => {
+                if (deleteSerieDialog) deleteMutation.mutate({ id: deleteSerieDialog.id, scope: 'all' })
+              }}>
+              {deleteMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+              Excluir toda a sequência
             </Button>
             <Button variant="ghost" className="w-full" onClick={() => setDeleteSerieDialog(null)}>
               Cancelar
@@ -807,7 +664,7 @@ export default function Lancamentos() {
       <ConfirmDialog
         open={deleteId !== null}
         description="Tem certeza que deseja excluir este lançamento? Esta ação não pode ser desfeita."
-        onConfirm={() => deleteId !== null && deleteMutation.mutate(deleteId)}
+        onConfirm={() => deleteId !== null && deleteMutation.mutate({ id: deleteId, scope: 'only' })}
         onCancel={() => setDeleteId(null)}
       />
     </div>
