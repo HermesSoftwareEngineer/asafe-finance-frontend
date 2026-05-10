@@ -144,6 +144,10 @@ export const relatoriosApi = {
       saldo_acumulado: item.saldo_acumulado,
     }))
   },
+  saldo: async (params: { data_alvo?: string; conta_id?: number; formato?: string }) => {
+    const resp = await api.get('/relatorios/saldo', { params })
+    return resp.data
+  },
   porCategoria: async (params: { data_inicio?: string; data_fim?: string; categoria_ids?: number[]; granularidade?: string }) => {
     const resp = await api.get('/relatorios/por-categoria', { params })
     // Map each category to the shape expected by the UI

@@ -116,10 +116,10 @@ export function FluxoCaixa({ dataInicio, dataFim, contaId, enabled = true }: Pro
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   }, [dataInicio])
 
-  // We fetch fluxoCaixa up to yesterday to get the true initial balance
-  const { data: fluxoAnterior, isLoading: fluxoLoading } = useQuery<FluxoRow[]>({
-    queryKey: ['relatorios', 'fluxo-anterior', yesterday, contaId],
-    queryFn: () => relatoriosApi.fluxoCaixa({ data_fim: yesterday, conta_id: contaId ? Number(contaId) : undefined }),
+  // We fetch saldo up to yesterday to get the true initial balance
+  const { data: saldoAnteriorData, isLoading: fluxoLoading } = useQuery({
+    queryKey: ['relatorios', 'saldo-anterior', yesterday, contaId],
+    queryFn: () => relatoriosApi.saldo({ data_alvo: yesterday, conta_id: contaId ? Number(contaId) : undefined }),
     enabled,
   })
 
@@ -131,8 +131,8 @@ export function FluxoCaixa({ dataInicio, dataFim, contaId, enabled = true }: Pro
 
     // Discover the starting balance before the period
     let lastSaldoAcumulado = 0;
-    if (fluxoAnterior && fluxoAnterior.length > 0) {
-      lastSaldoAcumulado = fluxoAnterior[fluxoAnterior.length - 1].saldo_acumulado;
+    if (saldoAnteriorData && typeof saldoAnteriorData.saldo_total === 'number') {
+      lastSaldoAcumulado = saldoAnteriorData.saldo_total;
     }
 
     // Initialize all periods
@@ -166,7 +166,7 @@ export function FluxoCaixa({ dataInicio, dataFim, contaId, enabled = true }: Pro
     })
 
     return Array.from(map.values())
-  }, [lancamentosRaw, fluxoAnterior, dataInicio, dataFim, granularidade])
+  }, [lancamentosRaw, saldoAnteriorData, dataInicio, dataFim, granularidade])
 
   const isLoading = lancLoading || fluxoLoading
 
@@ -211,14 +211,13 @@ export function FluxoCaixa({ dataInicio, dataFim, contaId, enabled = true }: Pro
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
                   <XAxis dataKey="periodo" tick={{ fontSize: 11 }} />
                   <YAxis yAxisId="left" tickFormatter={(v) => formatCurrency(v)} tick={{ fontSize: 11 }} width={80} />
-                  <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => formatCurrency(v)} tick={{ fontSize: 11 }} width={80} />
                   <ReTooltip
                     formatter={(value) => formatCurrency(Number(value ?? 0))}
                   />
                   <Legend />
                   <Bar yAxisId="left" dataKey="entradas" name="Entradas" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={50} />
                   <Bar yAxisId="left" dataKey="saidas" name="Saídas" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={50} />
-                  <Line yAxisId="right" type="monotone" dataKey="saldo_acumulado" name="Saldo Acumulado" stroke="#3b82f6" strokeWidth={3} dot={false} activeDot={{ r: 6 }} />
+                  <Line yAxisId="left" type="monotone" dataKey="saldo_acumulado" name="Saldo Acumulado" stroke="#3b82f6" strokeWidth={3} dot={false} activeDot={{ r: 6 }} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
